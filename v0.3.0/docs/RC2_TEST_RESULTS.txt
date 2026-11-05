@@ -1,0 +1,47 @@
+RansomGuard restore v0.7.0-rc2 validation summary
+Date: 2026-11-05 (KST)
+Environment: Linux x86_64, Python 3.12; NO Windows VM/daemon/JEV network access in this build environment.
+
+Command:
+  python -m unittest discover -s tests -q
+
+Result:
+  Asynchronous recovery failed (RecoveryError)
+  ----------------------------------------------------------------------
+  Ran 182 tests in 0.799s
+  OK
+
+Note: The asynchronous-recovery error line is intentional diagnostic output
+from a negative test case. It does not indicate a failed unittest.
+
+Coverage includes:
+  - Prior VSS selection, hourly snapshot scheduling, safe manifest restore
+  - Kernel ABI event decoding, process generation correlation, high-entropy Track B triage
+  - JEV verdict validation, retry/timeout handling, outbox, dashboard ACK
+  - Local Ransom0_UI IPC framing, kernel event mapping, verified response messages
+  - External firewall-manager JSON request/response contract and malformed responses
+  - Durable global host-outbound hold ownership and last-holder release behavior
+  - Track A/B live coordinator with fake process, daemon, JEV, and recovery boundaries
+  - PID generation mismatch and no premature unlock on partial restore/JEV timeout
+  - Opt-in observer routing, approved test path filtering, manual action authorization
+  - Read-only firewall policy plan and operator-reconciliation API
+
+Additional checks:
+  - py_compile / compileall of Python package
+  - Pure-Python wheel: ransomguard_integration-0.7.0rc2-py3-none-any.whl
+  - Offline pip installation into a fresh virtual environment, and
+    isolated 'python -I -m ransomguard capabilities' execution succeeded
+  - 'replay --scenario shared-host' reported network_scope=host_outbound,
+    with an unresolved incident retaining the host-wide hold.
+
+NOT EXECUTED / NOT PROVEN:
+  - Actual Windows named-pipe IPC to teammate's firewall-manager daemon
+  - WFP policy enforcement vs daemon active acknowledgement
+  - JEV service reachability and actual probabilistic classification
+  - Windows process handle creation time and kernel IOCTL termination in RC2
+  - End-to-end VSS file restoration in the updated Windows guest
+  - Receiver UI alert display, dashboard API contract and high-load robustness
+  - Existing outbound sessions, inbound traffic, DNS/53 exception and
+    global allowlist exposure (deferred for later work as requested)
+
+No project firewall daemon was started, stopped, altered or contacted here.

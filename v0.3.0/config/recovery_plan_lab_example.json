@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "volume_root": "C:\\",
+  "protected_root": "C:\\RansomGuardLab\\Protected",
+  "incident_at": "2026-11-05T02:00:00Z",
+  "snapshot_id": "{00000000-0000-0000-0000-000000000000}",
+  "manifest": [
+    "testfile.txt"
+  ]
+}
