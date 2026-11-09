@@ -1,0 +1,19 @@
+RansomGuard restore v0.7.0-rc2-hotfix1 — local validation
+Date: 2026-11-05 KST
+Platform: Linux / Python 3.12.14 (NOT a Windows live firewall test)
+
+1. Baseline rc2 firewall IPC tests: 12 passed.
+2. After hotfix: 14 firewall IPC tests passed, including regression tests for
+   duplicate ON, same-incident idempotency, daemon restart reassertion,
+   active allowlist drift fail-closed, and last-holder OFF.
+3. Full source unittest suite: 184 passed in approximately 1.0 seconds.
+4. Built wheel: ransomguard_integration-0.7.0rc2.post1-py3-none-any.whl
+   Wheel contains the patched firewall_control.py and metadata version 0.7.0rc2.post1.
+5. Offline installed the wheel into a temporary target and executed:
+   - capabilities: version 0.7.0-rc2-hotfix1, kernel ABI v0.7.0-rc2 v1
+   - replay --scenario shared-host: one host_outbound_on, one remaining hold.
+
+Not tested: Windows Firewall Manager named pipe on/get/off, actual WFP filter
+counts, real JEV HTTPS connectivity, stress or repeated sequential incidents,
+and firewall activation/deactivation delay (cooldown). No kernel binaries,
+external firewall-manager source, or UI receiver source were changed.

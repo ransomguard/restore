@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "volume_root": "C:\\",
+  "protected_root": "C:\\RansomGuardLab\\Protected",
+  "manifest": [
+    "testfile.txt"
+  ]
+}
