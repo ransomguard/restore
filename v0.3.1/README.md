@@ -4,7 +4,7 @@
 
 **실제 통신 확인:** Windows 11 VM에서 커널 이벤트 시퀀스 `2421`의 Track B 후보가 SQLite에 기록됐고, 이를 수동 JEV 호출로 전송해 실제 `jev-1.14.0` 점수 `0.21`을 받았다. Track B 응답 로직의 모의 단위 테스트 11개도 통과했다. 그러나 **완전 자동 JEV 연동 및 실제 차단·종료·복구는 미검증**이다. 아래 v0.3.0 및 과거 RC 문서는 개발 이력이다.
 
-**격리 정책 경고:** 현재 live 응답 구현은 `host_outbound` 전체 PC outbound 차단이며, 요구된 **의심 프로세스만 격리**하는 정책과 다르다. `observe --live-track-b`나 `respond-one`을 다음 검증 단계에서 바로 실행하지 않는다.
+**격리 정책 및 검증 경고:** 2026-11-05 팀장 회의에서 확정한 정책은 **Track A/B 공통 PC 전체 outbound 차단 + JEV 화이트리스트**다. 현재 live 응답 코드의 `host_outbound` 범위는 이 방향과 일치하지만, 외부 `firewall-manager`의 실제 WFP 차단/해제·허용목록은 아직 VM에서 검증되지 않았다. `observe --live-track-b`나 `respond-one`을 다음 검증 단계에서 바로 실행하지 않는다.
 
 ## 이전 버전 v0.3.0 기록
 

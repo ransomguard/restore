@@ -21,7 +21,7 @@
 ## 현재 한계와 안전 정책
 
 - 임시 판정 문턱값 `benign <=0.20`, `malicious >=0.80`; `0.21`은 애매함(`REVIEW_REQUIRED`)이다. 임계값은 아직 검증되지 않은 **시연값**이다.
-- live 코드의 네트워크 격리는 `host_outbound` **PC 전체 차단**이고, 의도한 PID/프로세스별 격리가 구현된 것으로 주장할 수 없다. 애매한 점수에서는 전체 차단이 유지될 수 있으므로 `--live-track-b`, `--authorize-live`, `respond-one`은 검증 전 실행하지 않는다.
+- 팀이 2026-11-05 확정한 방침은 **Track A/B 공통 PC 전체 outbound 차단 + JEV 화이트리스트**다. 현재 live 응답 코드의 `host_outbound` 범위는 이 방침과 맞지만, 실제 WFP 필터·허용목록 적용 및 해제는 미검증이다. 애매한 점수에서는 전역 차단이 유지될 수 있으므로 `--live-track-b`, `--authorize-live`, `respond-one`은 안전한 검증 절차 없이 실행하지 않는다.
 - `observer_stopped`에 새 저장/필터링 카운터가 모두 표시되는지는 실측 근거가 충분하지 않다. 추가 시험 필요.
 - 1시간 VSS 스케줄 작업은 VM에서 `NOT_INSTALLED`로 확인됐다. VSS snapshot-inventory는 별개로 확인했다.
 - 프로젝트 소스·실험 기록에 API 키나 private key를 넣지 않는다. JEV 실통신 시 `TYPESAFE_API_KEY`는 해당 PowerShell **프로세스 환경 변수**로만 전달한다.
