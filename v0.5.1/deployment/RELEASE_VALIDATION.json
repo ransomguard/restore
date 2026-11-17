@@ -17,5 +17,8 @@
   "capacity_target_satisfied": false,
   "creation": "paused_due_to_protected_shared_space",
   "network_account_ui_policy": "unchanged",
-  "new_machine_integrated_installer": "not validated"
+  "new_machine_integrated_installer": "not validated",
+  "pre_shutdown_full_db_audit_additional_dropped": 843,
+  "latest_cumulative_dropped": 103110,
+  "online_integrity_scan_contention": "suspected; causal root cause not established; heavy online shutdown checks removed"
 }
