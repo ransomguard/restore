@@ -1,0 +1,18 @@
+RansomGuard restore v0.3.0 — package renaming verification
+Date: 2026-11-05 KST
+Platform: Linux / Python 3.12 (not a Windows live-response test)
+
+Source: restore v0.7.0-rc2-hotfix1; only release names, Python package
+version identifiers, release documentation, and wheel packaging changed.
+Kernel ABI reference remains v0.7.0-rc2 ABI v1.
+
+1. Python unittest discover -s tests -v: 184 passed.
+2. Built offline-compatible wheel:
+   dist/ransomguard_integration-0.3.0-py3-none-any.whl
+3. python -m ransomguard capabilities:
+   version=0.3.0; kernel_compatibility=v0.7.0-rc2 ABI v1.
+4. Previous rc2-hotfix1 firewall duplicate-ON fix remains unchanged.
+
+No live Windows named-pipe/WFP/JEV or destructive response validation was
+performed as part of renaming. Earlier VM tests do not prove actual WFP
+packet enforcement. External firewall-manager and knel were not modified.
