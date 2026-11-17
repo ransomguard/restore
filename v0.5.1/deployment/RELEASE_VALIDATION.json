@@ -1,0 +1,21 @@
+{
+  "date": "2026-11-18",
+  "restore_version": "0.5.1",
+  "python_host_passed": 368,
+  "python_guest_passed": 368,
+  "ui_tests_passed": 37,
+  "ui_lint": "passed",
+  "ui_typecheck": "passed",
+  "ui_production_build": "passed; same previously validated functional source",
+  "owned_deleted": 2,
+  "protected_remaining": 4,
+  "repeat_deleted": 0,
+  "restore_under_pin_verified_files": 1,
+  "retention_additional_dropped": 0,
+  "retention_additional_flushed": 0,
+  "cumulative_dropped_preserved": 102267,
+  "capacity_target_satisfied": false,
+  "creation": "paused_due_to_protected_shared_space",
+  "network_account_ui_policy": "unchanged",
+  "new_machine_integrated_installer": "not validated"
+}
