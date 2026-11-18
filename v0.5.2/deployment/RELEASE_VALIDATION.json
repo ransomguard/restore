@@ -1,0 +1,15 @@
+{
+  "date": "2026-11-18",
+  "scope": "source release staging on developer host; no host driver installation or network policy change",
+  "restore_unit_tests": {"passed": 324, "failed": 0, "includes_new_deployment_tests": 5},
+  "ui_tests": {"passed": 28, "failed": 0, "source_equivalence": "staged functional files match tested ui-main sources after BOM/newline normalization"},
+  "ui_lint": "passed",
+  "ui_build": "previous completion-pass Windows installer build passed; no further functional UI edits in this release staging",
+  "kernel_source_checks": {"passed": 4},
+  "kernel_native_c_test": {"status": "blocked", "detail": "Host Windows security refused execution with WinError 225 after compilation; protection unchanged; not counted as a pass"},
+  "kernel_v0_9_0_signed_vm_package": "not rebuilt or installed during release staging",
+  "powershell_templates_syntax": "passed; tasks not registered on host",
+  "portable_launcher_new_machine_vm_test": "not performed; configuration-only tests passed",
+  "network_password_and_running_vm": "unchanged by release staging",
+  "previous_vm_evidence": {"write_calls": 120000, "additional_dropped": 0, "additional_flushed": 0, "historical_dropped_preserved": 51879, "track_b_real_jev_score": 0.86, "track_b_approved_files_verified": 12, "track_a_approved_files_verified": 12}
+}
