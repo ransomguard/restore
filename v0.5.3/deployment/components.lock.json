@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "name": "Ransom0 Unified Defense",
+  "date": "2026-11-20",
+  "kind": "Source integration; use integrated EXE for installation",
+  "restore": {
+    "repository": "ransomguard/restore",
+    "directory": "v0.5.3"
+  },
+  "components": {
+    "Kernel": {
+      "repository": "ransomguard/Kernel",
+      "commit": "b86f43518c78b45e475854bf47d1e5e01ffb954f",
+      "directory": "v0.9.2",
+      "archive": "https://github.com/ransomguard/Kernel/archive/b86f43518c78b45e475854bf47d1e5e01ffb954f.zip"
+    },
+    "ui": {
+      "repository": "ransomguard/ui",
+      "commit": "31f18d15632f2c57e05a3b8f3d76c82d7255e245",
+      "directory": ".",
+      "archive": "https://github.com/ransomguard/ui/archive/31f18d15632f2c57e05a3b8f3d76c82d7255e245.zip"
+    },
+    "firewall-manager": {
+      "repository": "ransomguard/firewall-manager",
+      "commit": "766f90f422e85d9816f310cb3ee467635979c8f2",
+      "directory": ".",
+      "archive": "https://github.com/ransomguard/firewall-manager/archive/766f90f422e85d9816f310cb3ee467635979c8f2.zip"
+    }
+  },
+  "installer": {
+    "repository": "ransomguard/installer",
+    "tag": "v0.6.0-preview.15"
+  },
+  "note": "Current source commits. Exact prebuilt binaries: installer payload-manifest.json. Microsoft release signing pending."
+}

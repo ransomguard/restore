@@ -1,0 +1,44 @@
+RansomGuard v0.4.0 - asynchronous lab response integration
+
+The default launcher is observe-only when live-response-profile.json is absent.
+A finite, explicitly authorized profile enables Track A/B only beneath its NT
+path prefix and with a fixed recovery manifest. It does not authorize arbitrary
+system-wide file restoration. VM-only testing is required for driver actions.
+
+New implementation:
+- A bounded automatic evidence window collects subsequent kernel attempts for
+  the same PID and creation FILETIME. Child command denials require parent==creator.
+- Approved observed files can be compared with baseline hashes using read-only
+  Windows handles that deny concurrent write/delete sharing. No contents leave
+  the VM. Hash differences do not independently prove process causation.
+- Durable response jobs run on a separate thread with separate SQLite connections.
+  JEV/VSS waits do not hold the collection transaction. A committed job and durable
+  process-generation reservation precede side effects. Old unfinished jobs require
+  review and are never replayed automatically after a crash.
+- PID identity, evidence age, collection loss and shutdown cancellation are checked
+  again after JEV and immediately before termination. Started recovery is allowed
+  to finish while intake remains alive.
+- New collectors restore process lifecycle monitoring after a maintenance pause.
+- Startup/supervision accept only the explicitly selected finite live profile.
+  Legacy unrestricted live mode is not automatically restarted.
+- Cold startup uses a partial index for legacy diagnostic migration and a bounded
+  retention cursor. Protected history does not cause unbounded startup scans.
+  The launcher waits for the same starting collector and requires a fresh healthy
+  handshake before enabling the file filter. It does not kill or duplicate it.
+- Completed raw capacity slots are released only after processing and a genuine
+  UI acknowledgement (or explicit UI sampling). Retained evidence and review holds
+  remain independent of the capacity count. The raw buffer is not a UI history cap.
+- The collector's own recovery writes are retained as telemetry but never queued
+  for a response against itself. Existing review cases are not silently released.
+- UI commit ACKs negotiate batches up to 64 items, bounded by the existing 64 KiB
+  wire limit. An older UI stays at 20; transport failure retries at 20 with the
+  same durable IDs. No receipt or raw evidence is fabricated or discarded.
+  The paired Electron change is IPC-only; the renderer source is unchanged.
+
+Operational limits:
+- JEV thresholds 0.2/0.8 are still uncalibrated demo values, not a validated false-
+  positive policy. Do not equate the harmless VM exercise with real malware coverage.
+- VSS recovery uses an approved finite manifest. Kernel pre-operation paths alone
+  do not establish complete affected-file coverage or a successful write.
+- Review holds and failed recovery evidence remain until explicitly reconciled.
+- This work preserves existing UI layout and history, networking and account settings.

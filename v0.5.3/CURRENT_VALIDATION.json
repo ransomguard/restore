@@ -1,0 +1,9 @@
+{
+  "installer": "v0.6.0-preview.15",
+  "source_folder": "v0.5.3",
+  "current_results_url": "https://github.com/ransomguard/installer/releases/tag/v0.6.0-preview.15",
+  "historical_docs_are_not_current_claims": true,
+  "kernel_static_tests": null,
+  "backend_tests": 507,
+  "microsoft_distribution_signed": false
+}
