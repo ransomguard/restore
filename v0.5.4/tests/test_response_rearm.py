@@ -17,8 +17,8 @@ class RearmTests(unittest.TestCase):
         self.now=5;self.assertEqual(self.r.tick(self.status,0)['request_id'],'fresh')
         self.assertTrue(self.p.invalid.is_set());self.assertIsNone(self.r.tick(self.status,0))
         self.request.assert_called_once()
-    def test_busy_queue_active_response_and_further_loss_restart_stability_window(self):
-        for busy in ('queue','pending','active','loss'):
+    def test_active_response_and_further_loss_restart_stability_window(self):
+        for busy in ('active','loss'):
             with self.subTest(busy=busy):
                 self.setUp();self.r.tick(self.status,0);self.now=10
                 s=dict(self.status);pending=0
@@ -28,6 +28,28 @@ class RearmTests(unittest.TestCase):
                 if busy=='loss':s['events_dropped']=9
                 self.assertIsNone(self.r.tick(s,pending));self.request.assert_not_called()
                 self.p.jobs.active.clear();self.now=11;self.assertIsNone(self.r.tick(s|{'queue_depth':0},0))
+    def test_normal_arrivals_do_not_starve_rearm_but_busy_queues_block_request(self):
+        for kind in ('kernel','python'):
+            with self.subTest(kind=kind):
+                self.setUp()
+                for second in range(9):
+                    self.now=second
+                    busy=second % 4 == 0 or second >= 5
+                    status=self.status|{'queue_depth':int(busy and kind=='kernel')}
+                    self.assertIsNone(self.r.tick(status,int(busy and kind=='python')))
+                self.request.assert_not_called()
+                self.now=9
+                self.assertEqual(self.r.tick(self.status,0)['request_id'],'fresh')
+                self.assertTrue(self.p.invalid.is_set())
+                self.request.assert_called_once()
+    def test_unknown_counters_reset_stability_and_unknown_queue_blocks(self):
+        self.r.tick(self.status,0)
+        self.now=5
+        self.assertIsNone(self.r.tick(self.status|{'events_dropped':None},0))
+        self.now=6;self.assertIsNone(self.r.tick(self.status,0))
+        self.now=11;self.assertIsNone(self.r.tick(self.status|{'queue_depth':None},0))
+        self.request.assert_not_called()
+        self.assertEqual(self.r.tick(self.status,0)['request_id'],'fresh')
     def test_no_loss_or_nonresident_never_requests(self):
         self.r.tick(self.status|{'events_dropped':7},0);self.now=20
         self.r.tick(self.status|{'events_dropped':7},0);self.request.assert_not_called()

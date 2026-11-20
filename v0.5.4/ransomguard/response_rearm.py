@@ -20,12 +20,15 @@ class ResponseRearm:
         if not self.pipeline.invalid.is_set():self.since=None;return None
         # Keep all jobs from the invalid worker invalid, including queued jobs.
         # Only a fresh worker gets a new identity/triage window and baseline.
-        if pending!=0 or status.get('queue_depth')!=0 or self.pipeline.jobs.active.is_set():
+        if self.pipeline.jobs.active.is_set():
             self.since=None;self.last=values;return None
         now=self.clock()
         if self.since is None or values!=self.last:
             self.since=now;self.last=values;return None
         if now-self.since<5:return None
+        # Normal arrivals must not restart the loss-stability timer forever.
+        # Still require both queues drained at the actual handover request.
+        if pending!=0 or status.get('queue_depth')!=0:return None
         try:
             if self.request is None:
                 from .resident import request_reload

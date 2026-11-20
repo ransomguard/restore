@@ -208,8 +208,9 @@ def _observe(args: argparse.Namespace, *, shared_reader=None, reload_requested=N
     count = 0
     raw_events_read = 0
     storage_events_skipped = 0
-    from .ui_delivery import DurableUiDelivery
-    ui_context = (DurableUiDelivery(args.db) if getattr(args, "ui_durable", False) else WindowsUiPipe()) if args.ui else nullcontext()
+    from .ui_delivery import DurableUiDelivery, resident_delivery
+    ui_context = ((resident_delivery(args, args.db) if shared_reader is not None else DurableUiDelivery(args.db))
+                  if getattr(args, "ui_durable", False) else WindowsUiPipe()) if args.ui else nullcontext()
     response_owner_context = nullcontext()
     jev = None
     threshold_policy = None

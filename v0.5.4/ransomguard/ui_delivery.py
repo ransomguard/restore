@@ -8,8 +8,52 @@ import json
 import sqlite3
 import threading
 import uuid
-from contextlib import nullcontext
-from .ui_pipe import WindowsUiPipe, encode_ui_jsonl, LEGACY_BATCH_ITEMS, MAX_BATCH_ITEMS
+import time
+from contextlib import nullcontext, contextmanager
+from .ui_pipe import WindowsUiPipe, encode_ui_jsonl, LEGACY_BATCH_ITEMS, MAX_BATCH_ITEMS, MAX_MESSAGE_BYTES
+
+
+def build_delivery_items(rows):
+    """Select the same bounded prefix without re-encoding every growing prefix."""
+    size = len(encode_ui_jsonl({"deliveryVersion": 1, "items": []}))
+    items = []
+    for id_, payload in rows:
+        item = {"id": id_, "message": json.loads(payload)}
+        # Each JSONL item includes a newline; envelopes need commas instead.
+        try:
+            addition = len(encode_ui_jsonl(item)) - 1 + bool(items)
+        except ValueError:
+            break
+        if size + addition > MAX_MESSAGE_BYTES:
+            break
+        size += addition
+        items.append(item)
+    return items
+
+
+@contextmanager
+def resident_delivery(owner, path):
+    """Keep committed UI delivery alive across a failed analysis worker.
+
+    The owner is the resident args object, retained across worker generations.
+    No new event is analysed here; only existing UI receipts are processed.
+    """
+    sink = getattr(owner, '_retained_ui_delivery', None)
+    if sink is None:
+        sink = DurableUiDelivery(path).__enter__()
+        owner._retained_ui_delivery = sink
+    failed = False
+    try:
+        yield sink
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        # Never retain the failed worker's soon-to-be-closed producer connection.
+        sink.enqueue_db = None
+        if not failed:
+            sink.close()
+            owner._retained_ui_delivery = None
 
 
 class DurableUiDelivery:
@@ -36,6 +80,8 @@ class DurableUiDelivery:
         self.last_error = None
         self.acked = 0
         self.thread = None
+        self.timings = {'batches': 0, 'exchange_seconds': 0.0, 'ack_db_seconds': 0.0,
+                        'max_exchange_seconds': 0.0, 'max_ack_db_seconds': 0.0}
         self.enqueue_db = None
         self.batch_limit = LEGACY_BATCH_ITEMS
         self.capacity_table_supported = 'capacity_released' in {r[1] for r in self.db.execute('PRAGMA table_info(events)')}
@@ -78,14 +124,7 @@ class DurableUiDelivery:
         with self.lock:
             rows = self.db.execute("SELECT id,payload FROM ui_pending ORDER BY position LIMIT ?", (self.batch_limit,)).fetchall()
             status, self.status = self.status, None
-        items = []
-        for id_, payload in rows:
-            candidate = items + [{"id": id_, "message": json.loads(payload)}]
-            try:
-                encode_ui_jsonl({"deliveryVersion": 1, "items": candidate})
-            except ValueError:
-                break
-            items = candidate
+        items = build_delivery_items(rows)
         # Opening an idle pipe makes the UI write connection logs, which the
         # kernel observes as new file events. Do not generate work from idleness.
         if not items and status is None:
@@ -93,12 +132,16 @@ class DurableUiDelivery:
         with self.factory() as pipe:
             if items:
                 try:
+                    exchange_started = time.monotonic()
                     ack = pipe.exchange(items)
                 except (OSError, ValueError):
                     # A restarted/older UI may no longer support larger frames.
                     # Retain all rows and retry the legacy envelope size.
                     self.batch_limit = LEGACY_BATCH_ITEMS
                     raise
+                exchange_elapsed = time.monotonic() - exchange_started
+                self.timings['exchange_seconds'] += exchange_elapsed
+                self.timings['max_exchange_seconds'] = max(self.timings['max_exchange_seconds'], exchange_elapsed)
                 # Independently validate transport ACKs before removing anything.
                 allowed = {item["id"] for item in items}
                 if not isinstance(ack, list) or any(not isinstance(x, str) or x not in allowed for x in ack):
@@ -107,6 +150,7 @@ class DurableUiDelivery:
                     raise OSError("UI did not acknowledge the pending batch")
                 advertised = getattr(pipe, 'peer_batch_limit', LEGACY_BATCH_ITEMS)
                 self.batch_limit = min(advertised, MAX_BATCH_ITEMS) if type(advertised) is int and advertised >= LEGACY_BATCH_ITEMS else LEGACY_BATCH_ITEMS
+                ack_started = time.monotonic()
                 with self.lock, self.db:
                     self.db.executemany("UPDATE ui_delivery_tracking SET acked=1 WHERE delivery_id=?",[(x,) for x in ack])
                     self.db.executemany("UPDATE raw_retention SET ui_state='acked' WHERE event_id=(SELECT event_id FROM ui_delivery_tracking WHERE delivery_id=?)",[(x,) for x in ack])
@@ -119,6 +163,10 @@ class DurableUiDelivery:
                     self.db.executemany("DELETE FROM ui_pending WHERE id=?", [(x,) for x in ack])
                     self.db.commit()
                     self.acked += len(set(ack))
+                ack_elapsed = time.monotonic() - ack_started
+                self.timings['ack_db_seconds'] += ack_elapsed
+                self.timings['max_ack_db_seconds'] = max(self.timings['max_ack_db_seconds'], ack_elapsed)
+                self.timings['batches'] += 1
             if status:
                 pipe.send(status)
         return bool(items)
@@ -140,7 +188,7 @@ class DurableUiDelivery:
         with self.lock:
             return {"pending": self.db.execute("SELECT pending FROM ui_pending_capacity WHERE singleton=1").fetchone()[0],
                     "acknowledged": self.acked, "last_error": self.last_error,
-                    "batch_limit": self.batch_limit}
+                    "batch_limit": self.batch_limit, "timings": dict(self.timings)}
 
     def __enter__(self):
         self.thread = threading.Thread(target=self._run, name="ui-delivery", daemon=True)

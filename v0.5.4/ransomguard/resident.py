@@ -249,6 +249,10 @@ def run(args, *, factory=WindowsDriverReader):
     finally:
         # Full process shutdown is distinct from worker handover. Retain unread
         # Python bytes before releasing the current kernel ABI's engine handle.
+        retained_ui = getattr(args, '_retained_ui_delivery', None)
+        if retained_ui is not None:
+            retained_ui.close()
+            args._retained_ui_delivery = None
         wal_maintenance.close()
         os.environ.pop('RANSOMGUARD_OWNED_WAL_MAINTENANCE', None)
         pending = reader.stop_and_drain()

@@ -23,6 +23,81 @@ class Transport:
 
 
 class DeliveryTests(unittest.TestCase):
+    def test_real_delivery_thread_drains_after_analysis_exception(self):
+        import threading,time
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from ransomguard.ui_delivery import resident_delivery
+        release=threading.Event()
+        class PausedTransport(Transport):
+            peer_batch_limit=64
+            def exchange(self,items):
+                if not release.wait(3): raise TimeoutError('test gate')
+                return super().exchange(items)
+        with tempfile.TemporaryDirectory() as folder:
+            transport=PausedTransport()
+            sink=DurableUiDelivery(Path(folder)/'queue',transport_factory=lambda:transport)
+            owner=SimpleNamespace()
+            try:
+                with patch('ransomguard.ui_delivery.DurableUiDelivery',return_value=sink):
+                    with self.assertRaisesRegex(RuntimeError,'analysis failed'):
+                        with resident_delivery(owner,'unused') as active:
+                            for i in range(200):active.send({'type':'ALERT','data':{'index':i}})
+                            raise RuntimeError('analysis failed')
+                    release.set()
+                    deadline=time.monotonic()+5
+                    while sink.diagnostics()['pending'] and time.monotonic()<deadline:time.sleep(.01)
+                    self.assertEqual(sink.diagnostics()['pending'],0)
+                    self.assertEqual(sink.diagnostics()['acknowledged'],200)
+                    self.assertEqual(sorted(x['data']['index'] for x in transport.seen.values()),list(range(200)))
+                    self.assertTrue(sink.thread.is_alive())
+                    with resident_delivery(owner,'unused'):pass
+                    self.assertFalse(sink.thread.is_alive())
+            finally:
+                release.set()
+                if getattr(owner,'_retained_ui_delivery',None) is not None:sink.close()
+
+    def test_failed_worker_retains_delivery_and_next_worker_reuses_it(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from ransomguard.ui_delivery import resident_delivery
+        class Sink:
+            enqueue_db = None
+            closed = False
+            def __enter__(self): return self
+            def close(self): self.closed = True
+        owner=SimpleNamespace();sink=Sink()
+        with patch('ransomguard.ui_delivery.DurableUiDelivery', return_value=sink) as factory:
+            with self.assertRaisesRegex(RuntimeError, 'analysis failed'):
+                with resident_delivery(owner, 'unused') as active:
+                    active.enqueue_db=object()
+                    raise RuntimeError('analysis failed')
+            self.assertFalse(sink.closed)
+            self.assertIsNone(sink.enqueue_db)
+            with resident_delivery(owner, 'unused') as active:
+                self.assertIs(active,sink)
+            self.assertTrue(sink.closed)
+            self.assertIsNone(owner._retained_ui_delivery)
+            self.assertEqual(factory.call_count,1)
+
+    def test_linear_batch_matches_legacy_prefix_and_wire_bytes(self):
+        import json
+        from ransomguard.ui_delivery import build_delivery_items
+        for text in ('', '한글😀' * 40, 'x' * 4000, 'x' * 65536):
+            rows = [(str(i), json.dumps({'type': 'ALERT', 'data': {'text': text, 'index': i}})) for i in range(64)]
+            expected = []
+            for id_, payload in rows:
+                candidate = expected + [{'id': id_, 'message': json.loads(payload)}]
+                try:
+                    encode_ui_jsonl({'deliveryVersion': 1, 'items': candidate})
+                except ValueError:
+                    break
+                expected = candidate
+            actual = build_delivery_items(rows)
+            self.assertEqual(actual, expected)
+            self.assertEqual(encode_ui_jsonl({'deliveryVersion': 1, 'items': actual}),
+                             encode_ui_jsonl({'deliveryVersion': 1, 'items': expected}))
+
     def test_idle_delivery_does_not_open_pipe_but_status_still_delivers(self):
         with tempfile.TemporaryDirectory() as folder:
             opened = []
