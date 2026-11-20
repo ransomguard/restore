@@ -111,13 +111,21 @@ class UiBridgeTests(unittest.TestCase):
             with self.assertRaises(UiMappingError):
                 snapshot_created_to_ui_message(invalid)
 
-    def test_bounded_file_rate_and_offline_backoff_preserve_process_priority(self):
+    def test_thousand_same_instant_file_events_are_all_sent(self):
+        sink = MockSink()
+        ui = UiBestEffortPublisher(sink, file_rate=1, clock=lambda: 10.0)
+        for sequence in range(1, 1001):
+            self.assertEqual(ui.publish_event(file_event(sequence=sequence)), "sent")
+        self.assertEqual(ui.diagnostics()["sent"], 1000)
+        self.assertEqual(ui.diagnostics()["rate_limited"], 0)
+
+    def test_legacy_file_rate_does_not_sample_and_offline_backoff_is_preserved(self):
         sink = MockSink()
         now = [10.0]
         ui = UiBestEffortPublisher(sink, file_rate=2, retry_seconds=2.0, clock=lambda: now[0])
         self.assertEqual(ui.publish_event(file_event(sequence=1)), "sent")
         self.assertEqual(ui.publish_event(file_event(sequence=2)), "sent")
-        self.assertEqual(ui.publish_event(file_event(sequence=3)), "rate_limited")
+        self.assertEqual(ui.publish_event(file_event(sequence=3)), "sent")
         self.assertEqual(ui.publish_event(process_event(sequence=4)), "sent")
         sink.offline = True
         self.assertEqual(ui.publish_event(process_event(sequence=5)), "send_failed")
@@ -125,8 +133,8 @@ class UiBridgeTests(unittest.TestCase):
         now[0] = 13.0
         sink.offline = False
         self.assertEqual(ui.publish_event(file_event(sequence=7)), "sent")
-        self.assertEqual(ui.diagnostics()["sent"], 4)
-        self.assertEqual(ui.diagnostics()["rate_limited"], 1)
+        self.assertEqual(ui.diagnostics()["sent"], 5)
+        self.assertEqual(ui.diagnostics()["rate_limited"], 0)
         self.assertEqual(ui.diagnostics()["send_failed"], 1)
 
     def test_invalid_or_oversized_sink_frame_does_not_interrupt_observation(self):

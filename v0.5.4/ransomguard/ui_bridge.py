@@ -8,7 +8,6 @@ pre-operation *attempts*, not evidence that an encryption/write completed.
 
 from __future__ import annotations
 
-from collections import deque
 import math
 import os
 import time
@@ -214,10 +213,10 @@ class MessageSink(Protocol):
 
 
 class UiBestEffortPublisher:
-    """Bounded-rate UI fanout. Never queues messages or triggers an OS action.
+    """UI fanout without file-event sampling. Never triggers an OS action.
 
     A missing/busy UI disables writes temporarily; all original events are
-    already persisted by the caller. Process events bypass file rate limits.
+    already persisted by the caller. Legacy file_rate is accepted but ignored.
     """
 
     def __init__(self, sink: MessageSink, *, file_rate: int = 10, retry_seconds: float = 3.0,
@@ -230,7 +229,6 @@ class UiBestEffortPublisher:
         self.file_rate = file_rate
         self.retry_seconds = float(retry_seconds)
         self.clock = clock
-        self._file_sent_at: deque[float] = deque()
         self._offline_until = -math.inf
         self._status_sent_at = -math.inf
         ui_path = os.environ.get("RANSOM0_UI_DATABASE")
@@ -243,12 +241,6 @@ class UiBestEffortPublisher:
 
     def _send(self, message: dict[str, Any], *, is_file: bool, event_id=None, incident_id=None) -> str:
         now = self.clock()
-        if is_file:
-            while self._file_sent_at and self._file_sent_at[0] <= now - 1.0:
-                self._file_sent_at.popleft()
-            if len(self._file_sent_at) >= self.file_rate:
-                self.counters["rate_limited"] += 1
-                return "rate_limited"
         if now < self._offline_until:
             self.counters["offline_skipped"] += 1
             return "offline_skipped"
@@ -266,8 +258,6 @@ class UiBestEffortPublisher:
             self.counters["send_failed"] += 1
             return "send_failed"
         self.counters["sent"] += 1
-        if is_file:
-            self._file_sent_at.append(now)
         return "sent"
 
     def publish_event(self, event: Event, *, event_id=None) -> str:

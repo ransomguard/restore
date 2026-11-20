@@ -1,7 +1,7 @@
 """Durable local UI delivery, independent of the raw forensic outbox ACKs.
 
-The UI must commit its receipt and log atomically. File-event sampling still
-applies before enqueue. SYSTEM_STATUS is transient and coalesced, never replayed.
+The UI must commit its receipt and log atomically. Every new eligible file event
+is enqueued. SYSTEM_STATUS is transient and coalesced, never replayed.
 """
 from __future__ import annotations
 import json
