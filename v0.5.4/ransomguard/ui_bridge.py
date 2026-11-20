@@ -130,7 +130,7 @@ def snapshot_created_to_ui_message(result: dict[str, Any], *, now_seconds: float
 def live_result_to_ui_messages(result: Any, *, protected_root: str,
                                observed_path: str = "", now_seconds: float | None = None,
                                track_a_corroborated: bool = False) -> list[dict[str, Any]]:
-    """Only map validated JEV/exit/recovery results, not speculative alerts.
+    """Map recorded JEV decisions, including review, and verified outcomes.
 
     No QUARANTINED alert is sent merely because the firewall daemon reported
     active: that acknowledgement is NOT proof of packet-level enforcement.
@@ -148,7 +148,6 @@ def live_result_to_ui_messages(result: Any, *, protected_root: str,
         'jevRequestId': result.jev_request_id,
         'jevModel': getattr(result, 'jev_model', None),
         'jevRequestState': getattr(result, 'jev_request_state', None),
-        'jevRequestState': getattr(result, 'jev_request_state', None),
         'thresholds': getattr(result, 'decision_thresholds', None),
         'thresholdPolicy': 'uncalibrated_demo_only' if result.track == 'B' else None,
         'kernelTerminationAccepted': bool(result.kernel_termination_accepted),
@@ -163,14 +162,15 @@ def live_result_to_ui_messages(result: Any, *, protected_root: str,
     track_a_blocked = (result.track == "A" and result.kernel_termination_accepted and
                        result.exit_confirmed)
     allowed = result.jev_classification == "benign" and result.state == "RELEASED"
-    if track_a_blocked or (result.track == "B" and result.jev_score is not None and (blocked or allowed)):
+    review = result.track == "B" and result.state == "REVIEW_REQUIRED" and not blocked
+    if track_a_blocked or review or (result.track == "B" and result.jev_score is not None and (blocked or allowed)):
         score = 1.0 if track_a_blocked else result.jev_score
-        if not isinstance(score, (int, float)) or isinstance(score, bool) or not math.isfinite(score) or not 0 <= score <= 1:
+        if not (review and score is None) and (not isinstance(score, (int, float)) or isinstance(score, bool) or not math.isfinite(score) or not 0 <= score <= 1):
             raise UiMappingError("Invalid JEV score for UI")
         data = {"processId": _safe_unsigned(result.process.pid, "response pid"),
                 "processName": f"PID_{result.process.pid}",
-                "action": "BLOCKED" if blocked or track_a_blocked else "ALLOWED",
-                "eventId": result.incident_id, "threatScore": round(score * 100, 2), "decision": decision,
+                "action": "REVIEW_REQUIRED" if review else "BLOCKED" if blocked or track_a_blocked else "ALLOWED",
+                "eventId": result.incident_id, "threatScore": None if score is None else round(score * 100, 2), "decision": decision,
                 "terminationConfirmed": bool(result.kernel_termination_accepted and result.exit_confirmed),
                 "processGeneration": str(result.process.create_time),
                 "ruleName": ("TRACK_A_OPERATOR_CONFIRMED" if track_a_blocked else

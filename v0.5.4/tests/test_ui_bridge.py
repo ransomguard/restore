@@ -183,10 +183,33 @@ class UiBridgeTests(unittest.TestCase):
         item.firewall_policy_acknowledged = True
         item.firewall_hold_retained = True
         item.state = "REVIEW_REQUIRED"
-        self.assertEqual(live_result_to_ui_messages(item, protected_root=r"C:\Protected"), [])
+        messages = live_result_to_ui_messages(item, protected_root=r"C:\Protected")
+        self.assertEqual(messages[0]["data"]["action"], "REVIEW_REQUIRED")
+        self.assertIsNone(messages[0]["data"]["threatScore"])
         item.jev_score = 0.5
         item.jev_classification = "ambiguous"
-        self.assertEqual(live_result_to_ui_messages(item, protected_root=r"C:\Protected"), [])
+        item.reason = "jev_ambiguous_demo_threshold"
+        messages = live_result_to_ui_messages(item, protected_root=r"C:\Protected")
+        self.assertEqual(len(messages), 1)
+        data = messages[0]["data"]
+        self.assertEqual(data["action"], "REVIEW_REQUIRED")
+        self.assertEqual(data["threatScore"], 50)
+        self.assertFalse(data["terminationConfirmed"])
+        self.assertFalse(data["decision"]["recoveryVerified"])
+        self.assertTrue(data["decision"]["firewallHoldRetained"])
+        self.assertEqual(data["decision"]["reason"], "jev_ambiguous_demo_threshold")
+
+    def test_verified_termination_stays_recorded_if_later_recovery_needs_review(self):
+        item = ResponseResult("test-id", "B", ProcessInstance(4004, FILETIME))
+        item.state = "REVIEW_REQUIRED"
+        item.reason = "restore_not_verified"
+        item.jev_score = 0.95
+        item.jev_classification = "malicious"
+        item.kernel_termination_accepted = item.exit_confirmed = True
+        message = live_result_to_ui_messages(item, protected_root=r"C:\Protected")[0]
+        self.assertEqual(message["data"]["action"], "BLOCKED")
+        self.assertTrue(message["data"]["terminationConfirmed"])
+        self.assertFalse(message["data"]["decision"]["recoveryVerified"])
 
     def test_track_a_alert_requires_kernel_accepted_termination_and_confirmed_exit(self):
         item = ResponseResult("track-a-id", "A", ProcessInstance(4004, FILETIME))
