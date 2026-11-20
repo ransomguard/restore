@@ -1,0 +1,26 @@
+{
+  "version": "0.6.0-preview.19",
+  "restore_version": "0.5.4",
+  "audit_date": "2026-11-20",
+  "vm_basis": "preview.18 with applied patches",
+  "checks": {
+    "total": 80,
+    "pass": 50,
+    "partial": 10,
+    "fail": 1,
+    "fail_or_inconclusive": 1,
+    "unverified": 18
+  },
+  "local_tests": {
+    "backend": 526,
+    "installer": 19,
+    "testlab": 11,
+    "ui": 45,
+    "ui_lint": "pass"
+  },
+  "new_package_fresh_install_reboot": "not_verified",
+  "event_loss_resolved": false,
+  "lifetime_dropped_preserved": 1162915,
+  "vm_automation_runner": "stopped",
+  "permanent_agent_task": "ready_not_running"
+}
