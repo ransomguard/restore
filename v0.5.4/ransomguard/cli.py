@@ -330,8 +330,36 @@ def _observe(args: argparse.Namespace, *, shared_reader=None, reload_requested=N
         from .storage_transaction import PassiveBatch
         storage_batch = PassiveBatch(outbox,limit=256,max_seconds=.05) if not live_any or async_live else None
         from .internal_collection import InternalCollection
-        internal_collection = InternalCollection(Path(args.ready_file).parent) if args.ready_file else None
+        internal_collection = getattr(args,'_internal_collection',None) if shared_reader is not None else None
+        if internal_collection is None and args.ready_file:
+            internal_collection = InternalCollection(Path(args.ready_file).parent)
+            if shared_reader is not None:args._internal_collection=internal_collection
+        from .delivery_pressure import DeliveryPressure
+        pressure=DeliveryPressure(outbox.db,outbox.max_pending) if publisher and args.ui_durable else None
         last_status_poll = time.monotonic()
+        def poll_status(event=None):
+            nonlocal dropped_before,last_status_poll
+            if storage_batch:storage_batch.flush()
+            new_status = reader.status()
+            cumulative_status = counters.observe(new_status)
+            maintenance.tick(new_status)
+            response_health(new_status)
+            health.metadata['counter_totals'] = dict(counters.state.get('totals', {}))
+            health.metadata['pending_intake'] = reader.queue.qsize() if hasattr(reader, 'queue') else 0
+            health.publish(new_status, intake=reader.diagnostics() if prefetch else None)
+            current_dropped = new_status.get("events_dropped")
+            if (type(dropped_before) is int and type(current_dropped) is int
+                    and current_dropped > dropped_before):
+                registry.invalidate()
+                reset = triage.reset(reason="driver_drop_counter_advanced")
+                outbox.append(reset.kind, reset.payload)
+                outbox.append("driver_event_loss_observed", {"execution_mode": "observation",
+                                                            "previous_drops": dropped_before,
+                                                            "current_drops": current_dropped})
+            dropped_before = current_dropped
+            if publisher:
+                publisher.publish_status(cumulative_status, sequence=event.sequence if event else None)
+            last_status_poll = time.monotonic()
         try:
             while args.limit == 0 or raw_events_read < args.limit:
                 raw = None
@@ -346,9 +374,24 @@ def _observe(args: argparse.Namespace, *, shared_reader=None, reload_requested=N
                 if internal_collection:
                     internal_collection.tick()
                     health.metadata['identity_correlation'] = dict(registry.stats, epoch=registry.epoch, ever_loss_detected=registry.ever_loss_detected)
-                    health.metadata['internal_collection'] = {'collect':internal_collection.collect,'excluded':internal_collection.excluded,'observed':internal_collection.observed,'error':internal_collection.error}
+                    health.metadata['internal_collection'] = internal_collection.diagnostics()
                     if publisher: publisher.include_internal_storage = internal_collection.collect
                 if pipeline: pipeline.tick()
+                if pressure and pressure.blocked():
+                    # Release the producer transaction so the receipt worker can
+                    # release capacity. Preserve queued raw events and policy checks.
+                    if storage_batch:storage_batch.flush()
+                    waiting_status=reader.status()
+                    cumulative_status=counters.observe(waiting_status)
+                    response_health(waiting_status)
+                    health.metadata['counter_totals']=dict(counters.state.get('totals',{}))
+                    health.metadata['pending_intake']=reader.queue.qsize() if hasattr(reader,'queue') else 0
+                    health.metadata['delivery_backpressure']={'active':True,'pending':pressure.pending,'waits':pressure.waits}
+                    health.publish(waiting_status,intake=reader.diagnostics() if prefetch else None)
+                    if publisher:publisher.publish_status(cumulative_status)
+                    time.sleep(.02)
+                    continue
+                health.metadata['delivery_backpressure']={'active':False,'pending':pressure.pending,'waits':pressure.waits} if pressure else None
                 # Prioritize incoming records during bursts. Completed evidence
                 # remains durable until a later short maintenance slice.
                 maintenance_room = not hasattr(reader,'queue') or reader.queue.qsize()<256
@@ -388,6 +431,7 @@ def _observe(args: argparse.Namespace, *, shared_reader=None, reload_requested=N
                         outbox.append(skipped.kind, skipped.payload)
                     raw_events_read += 1
                     raw = None
+                    if time.monotonic()-last_status_poll>=1:poll_status(event)
                     continue
                 if live_console: live_console.offer(event)
                 elif args.ready_file:
@@ -550,31 +594,8 @@ def _observe(args: argparse.Namespace, *, shared_reader=None, reload_requested=N
                         if not getattr(args, "quiet_events", False):
                             print(json.dumps({"kind": event.kind, "pid": event.pid, "sequence": event.sequence}, ensure_ascii=False))
                         count += 1
-                # A record-count-only cadence can starve health when each FULL
-                # SQLite commit is slow. Poll real status at record boundaries
-                # after one second too; never fabricate an independent heartbeat.
                 if raw_events_read % args.status_every == 0 or time.monotonic()-last_status_poll>=1:
-                    if storage_batch:storage_batch.flush()
-                    new_status = reader.status()
-                    cumulative_status = counters.observe(new_status)
-                    maintenance.tick(new_status)
-                    response_health(new_status)
-                    health.metadata['counter_totals'] = dict(counters.state.get('totals', {}))
-                    health.metadata['pending_intake'] = reader.queue.qsize() if hasattr(reader, 'queue') else 0
-                    health.publish(new_status, intake=reader.diagnostics() if prefetch else None)
-                    current_dropped = new_status.get("events_dropped")
-                    if (type(dropped_before) is int and type(current_dropped) is int
-                            and current_dropped > dropped_before):
-                        registry.invalidate()
-                        reset = triage.reset(reason="driver_drop_counter_advanced")
-                        outbox.append(reset.kind, reset.payload)
-                        outbox.append("driver_event_loss_observed", {"execution_mode": "observation",
-                                                                    "previous_drops": dropped_before,
-                                                                    "current_drops": current_dropped})
-                    dropped_before = current_dropped
-                    if publisher:
-                        publisher.publish_status(cumulative_status, sequence=event.sequence)
-                    last_status_poll = time.monotonic()
+                    poll_status(event)
         except KeyboardInterrupt:
             if raw is not None:
                 outbox.preserve_intake([raw], 'interrupted_in_flight_record_may_duplicate_processed_event')
@@ -585,7 +606,9 @@ def _observe(args: argparse.Namespace, *, shared_reader=None, reload_requested=N
             raise
         finally:
             registry.close()
-            if internal_collection:internal_collection.close()
+            if internal_collection and (shared_reader is None or health.stop_requested()):
+                internal_collection.close()
+                if shared_reader is not None:args._internal_collection=None
             if storage_batch:storage_batch.flush()
             if pipeline:
                 pipeline.request_stop()
