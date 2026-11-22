@@ -159,6 +159,7 @@ def _create_vss_snapshot(volume_id: str, *, timeout_seconds: float = 180.0) -> S
             input=json.dumps({"schema_version": 1, "volume_id": volume}),
             capture_output=True, text=True, encoding="utf-8", errors="strict",
             timeout=timeout, check=False, shell=False,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
         )
     except subprocess.TimeoutExpired:
         # Killing PowerShell does not prove that the provider stopped its work.

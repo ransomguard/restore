@@ -147,7 +147,8 @@ $remaining=@(Get-CimInstance Win32_ShadowCopy|Where-Object ID -eq $i.snapshot_id
 def _powershell(script, payload):
     result = subprocess.run([_powershell_executable(), '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
         input=json.dumps(payload), capture_output=True, text=True, encoding='utf-8',
-        timeout=30, check=False, shell=False)
+        timeout=30, check=False, shell=False,
+        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     if result.returncode != 0:
         raise RuntimeError('VSS provider operation failed; inspect retention journal')
     return json.loads(result.stdout.lstrip('\ufeff'))

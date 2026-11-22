@@ -285,6 +285,7 @@ def enumerate_snapshots(volume_id: str, *, timeout_seconds: float = 30.0) -> lis
             input=json.dumps({"schema_version": 1, "volume_id": volume}),
             capture_output=True, text=True, encoding="utf-8", errors="strict",
             timeout=timeout_seconds, check=False, shell=False,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
         )
         if result.returncode != 0:
             raise SnapshotDiscoveryError("CIM snapshot discovery failed")

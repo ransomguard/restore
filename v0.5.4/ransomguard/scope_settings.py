@@ -141,7 +141,7 @@ def change(runtime, request):
             # Key absence must never claim automatic JEV response is ready.
             transport=read(base,'jev-transport.json')
             import subprocess
-            key_ready=bool(transport and subprocess.run([transport['bridge'],'--check-key'],capture_output=True,timeout=20).returncode==0)
+            key_ready=bool(transport and subprocess.run([transport['bridge'],'--check-key'],capture_output=True,timeout=20,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0)).returncode==0)
             if key_ready:save_json(base/'live-response-profile.json',profile)
             else:(base/'live-response-profile.json').unlink(missing_ok=True)
             from .live_profile import observer_options
