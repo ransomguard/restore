@@ -31,6 +31,8 @@ class LivePipeline:
         self.invalid = threading.Event()
         self.started_filetime = int((time.time()+11644473600)*10_000_000)
         self.window = EvidenceWindow(args.response_path_prefix, seconds=config.get('evidence_window_seconds',2.0))
+        self.registry = None
+        self.next_evidence_peek = 0.0
         # Keep the pre-live policy across in-process worker replacements.
         # Otherwise a second worker would mistake our own BLOCK mode for the
         # original passive policy and leave it enabled after live shutdown.
@@ -48,6 +50,7 @@ class LivePipeline:
             self.outbox.append('automatic_evidence_deferred', item)
 
     def observe(self, event, registry):
+        self.registry = registry
         if registry.loss_detected:
             self.invalid.set()
         self.defer(self.window.observe(event, registry))
@@ -75,22 +78,67 @@ class LivePipeline:
                'filetime': filetime, 'evidence': payload,
                'deadline': filetime / 10_000_000 - 11644473600 + 30}
         outcome = self.jobs.enqueue(job)
+        if track == 'A' and outcome not in ('scope_change_in_progress', 'stopping'):
+            self.window.pending.pop((pid, generation), None)
         self.outbox.append('automatic_response_queued',
                            {'pid': pid, 'process_create_time': generation, 'track': track,
                             'queue_state': outcome, 'asynchronous': True}, incident_id=job['id'])
 
     def tick(self):
-        for item in self.window.due():
+        # A malformed raw can invalidate the registry before observe() runs.
+        # Never peek around that invalidation or authorize from its old window.
+        if self.registry is not None and self.registry.loss_detected:
+            self.invalid.set()
+            self.defer(self.window.invalidate('sequence_or_driver_loss'))
+        caught_up = not hasattr(self.reader, 'queue')
+        if self.window.pending and self.registry is not None and time.monotonic() >= self.next_evidence_peek:
+            from .evidence_peek import pending_evidence
+            self.next_evidence_peek = time.monotonic() + .25
+            try:
+                snapshot = pending_evidence(self.reader, self.registry,
+                                            {pid: generation for pid, generation in self.window.pending},
+                                            validated_through=min(item['last_collection_sequence']
+                                                for _, item in self.window.pending.values()))
+                if snapshot is not None:
+                    events, metrics = snapshot
+                    for event, local_registry in events:
+                        self.defer(self.window.observe(event, local_registry))
+                    caught_up = True
+                    self.last_evidence_peek = metrics
+                    for _, item in self.window.pending.values():
+                        item['queue_evidence_inspection'] = metrics
+                        if metrics['validated_through'] is not None:
+                            item['last_collection_sequence'] = max(item['last_collection_sequence'], metrics['validated_through'])
+            except (ValueError, struct.error):
+                self.invalid.set()
+                self.defer(self.window.invalidate('queued_evidence_invalid'))
+        if self.args.live_track_a:
+            for proof in self.window.confirmed_a():
+                self.submit('A', proof, pid=proof['pid'], generation=proof['create_time'],
+                            path=proof['path'], filetime=proof['rule_filetime'])
+        for item in self.window.due(caught_up=caught_up):
             self.submit('B', item, pid=item['pid'], generation=item['correlated_process_create_time'],
                         path=item['evidence']['trigger_path'], filetime=item['source_filetime'])
         if self.jobs.error:
             raise RuntimeError('Response worker failed: ' + self.jobs.error)
 
     def _respond(self, job, outbox, cancelled):
+        getattr(outbox, 'start_response_timing', lambda: None)()
+        note_timing = getattr(outbox, 'note_response_timing', lambda phase, start: None)
+        if job.get('resume_jev_review'):
+            outbox.append('late_track_a_review_upgraded', {
+                'pid': job['pid'], 'process_create_time': job['generation'],
+                'previous_review_reason': job['previous_review_reason'],
+                'corroborated_evidence': job['evidence'], 'previous_audit_preserved': True,
+            }, incident_id=job['id'])
         def guard():
             if job['pid']==os.getpid() or self.invalid.is_set() or cancelled.is_set() or time.time() > job['deadline']:
                 return False
-            status = self.driver.status()
+            started = time.perf_counter()
+            try:
+                status = self.driver.status()
+            finally:
+                note_timing('driver_status_guard', started)
             return (status.get('events_dropped'), status.get('events_flushed')) == self.baseline
         args = self.args
         if job['track']=='B' and args.response_manifest_template and guard():
@@ -106,18 +154,45 @@ class LivePipeline:
             outbox.append('automatic_jev_evidence',job['evidence'],incident_id=job['id'])
         provider = (None if args.response_no_recovery_required else
                     lambda: recovery_plan_from_template(args.response_manifest_template,
-                                                         incident_at=filetime_to_iso(job['filetime'])))
+                                                         incident_at=filetime_to_iso(job.get('recovery_filetime', job['filetime']))))
+        from pathlib import Path
+        from .review_pause import PauseJournal, ReviewPause
+        pause_journal = PauseJournal(Path(outbox.path).parent / 'review-pauses.sqlite3')
+        def additional_file_evidence(evidence):
+            if not args.response_manifest_template or not guard():
+                return None
+            from .file_evidence import measure_changes
+            evidence['verified_write_effects'] = measure_changes(args.response_manifest_template,
+                evidence, approved_prefix=args.response_path_prefix)
+            outbox.append('review_additional_file_evidence', evidence['verified_write_effects'], incident_id=job['id'])
+            return evidence
         with FirewallHoldManager(args.response_state_db, self.profile) as owner:
+            from .process_identity import WindowsProcessSession
+            def timed_process(process):
+                started = time.perf_counter()
+                try:
+                    return WindowsProcessSession(process)
+                finally:
+                    note_timing('process_open_and_generation', started)
             responder = LiveResponseCoordinator(outbox=outbox, firewall=owner, driver=self.driver,
                 jev=JevClient(JevConfig(base_url=self.profile.jev_url)),
-                thresholds=self.thresholds, decision_guard=guard)
+                thresholds=self.thresholds, decision_guard=guard, process_factory=timed_process,
+                review_followup=ReviewPause(pause_journal, additional_file_evidence))
             result = responder.respond(track=job['track'], process=ProcessInstance(job['pid'], job['generation']),
                 jev_state=job['evidence'], recovery_plan_provider=provider,
                 recovery_required=not args.response_no_recovery_required,
+                resume_jev_review=job.get('resume_jev_review', False),
                 track_a_confirmed=job['track']=='A', explicit_authorization=True, incident_id=job['id'])
+        if result.exit_confirmed:
+            try:
+                pause_journal.mark_exited(result)
+            except Exception as error:
+                outbox.append('review_exit_journal_unconfirmed',
+                    {'error_type': type(error).__name__, 'exit_confirmed': True}, incident_id=job['id'])
         if args.ui:
             if getattr(args, 'ui_durable', False):
                 sink = DurableUiDelivery(outbox.path)
+                sink.enable_detached_spool()
                 sink.use_enqueue_connection(outbox.db)
                 # The existing delivery thread consumes these committed rows.
                 # Never share the intake producer's SQLite connection here.

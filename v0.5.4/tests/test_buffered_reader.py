@@ -9,6 +9,30 @@ class Reader:
  def status(self):return {}
  def close(self):self.closed=True
 class BufferedTests(unittest.TestCase):
+ def test_batch_preserves_fifo_and_both_limits(self):
+  q=RawQueue(3,byte_limit=7)
+  self.assertEqual(q.put_available([b'aa',b'bbb',b'cccc']),(2,2))
+  self.assertEqual(q.bytes,5)
+  self.assertEqual(q.get_nowait(),b'aa')
+  self.assertEqual(q.put_available([b'cccc']),(1,2))
+  self.assertEqual([q.get_nowait(),q.get_nowait()],[b'bbb',b'cccc'])
+  self.assertEqual(q.bytes,0)
+  q=RawQueue(1);self.assertEqual(q.put_available([b'a',b'b']),(1,1))
+  self.assertEqual(q.get_nowait(),b'a')
+ def test_invalid_batch_does_not_partially_enqueue(self):
+  q=RawQueue(128,byte_limit=8)
+  with self.assertRaises(ValueError):q.put_available([b'a',b'x'*9])
+  with self.assertRaises(ValueError):q.put_available([b'a']*129)
+  self.assertTrue(q.empty())
+ def test_batch_shutdown_preserves_exact_order(self):
+  class BatchReader(Reader):
+   def read_many(self,timeout_ms=100):
+    if self.i:self.n=0;time.sleep(.002);return []
+    self.i=128;return [str(i).encode() for i in range(128)]
+  b=BufferedReader(BatchReader(128),3);b.__enter__();time.sleep(.08)
+  first=b.read();pending=b.stop_and_drain()
+  self.assertEqual([first]+pending,[str(i).encode() for i in range(128)])
+  self.assertLessEqual(b.peak,3);b.__exit__()
  def test_byte_bound_preserves_fifo_without_evicting(self):
   q=RawQueue(100,byte_limit=8)
   q.put(b'123456')

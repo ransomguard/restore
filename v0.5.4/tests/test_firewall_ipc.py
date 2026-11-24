@@ -87,6 +87,26 @@ class FirewallIpcTests(unittest.TestCase):
 
 
 class FirewallManagerTests(unittest.TestCase):
+    def test_late_a_transfer_preserves_isolation_and_other_holds(self):
+        with FirewallHoldManager(self.db,self.profile,client=self.fake) as owner:
+            owner.acquire('review','B');owner.retain_for_review('review')
+            owner.acquire('other','A')
+            before=len(self.fake.calls)
+            owner.resume_track_a_review('review')
+            self.assertEqual([a for a,_ in self.fake.calls[before:]],['get'])
+            self.assertTrue(self.fake.active)
+            self.assertEqual(owner.db.execute('SELECT track,state FROM firewall_holds WHERE incident_id=?',('review',)).fetchone(),('A','acknowledged'))
+            with self.assertRaises(FirewallHoldError):owner.resume_track_a_review('review')
+            self.assertEqual(owner.release('review')['remaining_holds'],1)
+            self.assertTrue(self.fake.active)
+
+    def test_late_a_drift_keeps_review_hold(self):
+        with FirewallHoldManager(self.db,self.profile,client=self.fake) as owner:
+            owner.acquire('review','B');owner.retain_for_review('review')
+            self.fake.active=False
+            with self.assertRaises(FirewallHoldError):owner.resume_track_a_review('review')
+            self.assertEqual(owner.db.execute('SELECT track,state FROM firewall_holds').fetchone(),('B','review_required'))
+
     def test_released_extra_exception_does_not_poison_next_incident(self):
         extra=FirewallProfile('https://api.typesafe.ai',('https://1.1.1.1',))
         with FirewallHoldManager(self.db,extra,client=self.fake) as owner:

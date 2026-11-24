@@ -12,7 +12,9 @@ import sqlite3
 import traceback
 
 from .outbox import Outbox
+from .response_timing import ResponseOutbox
 from .response_ledger import ResponseLedger
+from .late_track_a import valid_proof, promote
 
 
 class ResponseJobs:
@@ -36,6 +38,8 @@ class ResponseJobs:
             state TEXT NOT NULL, reason TEXT, payload TEXT NOT NULL,
             UNIQUE(pid,generation));
           CREATE INDEX IF NOT EXISTS response_jobs_ready ON response_jobs(owner,state,created);
+          CREATE TABLE IF NOT EXISTS response_track_a_updates (
+            id TEXT PRIMARY KEY, owner TEXT NOT NULL, payload TEXT NOT NULL, state TEXT NOT NULL);
         ''')
         with outbox.db:
             outbox.db.execute("UPDATE response_jobs SET state='REVIEW_REQUIRED',reason='previous_worker_ended_no_replay' WHERE state IN ('READY','RUNNING')")
@@ -61,7 +65,17 @@ class ResponseJobs:
         db = self.outbox.db
         with db:
             db.execute("DELETE FROM response_jobs WHERE pid=? AND generation=? AND state='EXEMPTED'", (job['pid'],job['generation']))
-            if db.execute('SELECT 1 FROM response_jobs WHERE pid=? AND generation=?', (job['pid'],job['generation'])).fetchone():
+            previous = db.execute('SELECT id,owner,track,state FROM response_jobs WHERE pid=? AND generation=?', (job['pid'],job['generation'])).fetchone()
+            if previous:
+                if (previous[1] == self.owner and previous[2] == 'B'
+                        and previous[3] in ('READY','RUNNING','REVIEW_REQUIRED') and valid_proof(job)):
+                    db.execute("INSERT OR IGNORE INTO response_track_a_updates VALUES(?,?,?,'waiting')",
+                               (previous[0], self.owner, encoded))
+                    promoted = promote(db, self.owner, previous[0])
+                    job['id'] = previous[0]
+                    db.commit()
+                    self.wake.set()
+                    return 'TRACK_A_PROMOTED' if promoted else 'TRACK_A_EVIDENCE_RETAINED'
                 return 'duplicate'
             pending = db.execute("SELECT count(*) FROM response_jobs WHERE owner=? AND state IN ('READY','RUNNING')", (self.owner,)).fetchone()[0]
             state = 'READY' if pending < self.max_pending else 'REVIEW_REQUIRED'
@@ -81,25 +95,32 @@ class ResponseJobs:
 
     def _run(self):
         try:
-            with Outbox(self.outbox.path) as outbox:
+            with ResponseOutbox(self.outbox.path) as outbox:
                 ledger = ResponseLedger(outbox.db)
                 self.ready.set()
                 while not self.cancel.is_set():
                     # Active covers selection too: a shutdown cannot unload the
                     # owning driver/module while a selected job begins.
                     self.active.set()
-                    row = outbox.db.execute("SELECT id,payload FROM response_jobs WHERE owner=? AND state='READY' ORDER BY created,id LIMIT 1", (self.owner,)).fetchone()
+                    # Selection and payload are atomic with a READY upgrade.
+                    row = None
+                    if outbox.db.execute("SELECT 1 FROM response_jobs WHERE owner=? AND state='READY' LIMIT 1", (self.owner,)).fetchone():
+                        outbox.db.execute('BEGIN IMMEDIATE')
+                        with outbox.db:
+                            row = outbox.db.execute("SELECT id,payload FROM response_jobs WHERE owner=? AND state='READY' ORDER BY created,id LIMIT 1", (self.owner,)).fetchone()
+                            if row:
+                                outbox.db.execute("UPDATE response_jobs SET state='RUNNING' WHERE id=? AND state='READY'", (row[0],))
                     if not row:
                         self.active.clear()
                         self.wake.wait(.1); self.wake.clear()
                         continue
                     id_, payload = row
-                    with outbox.db:
-                        outbox.db.execute("UPDATE response_jobs SET state='RUNNING' WHERE id=? AND state='READY'", (id_,))
                     job = json.loads(payload)
                     state, reason = 'REVIEW_REQUIRED', 'response_cancelled_before_start'
                     if not self.cancel.is_set():
-                        if ledger.claim(incident_id=id_, pid=job['pid'], process_create_time=job['generation']):
+                        claimed = (ledger.claim_track_a_upgrade(job) if job.get('resume_jev_review') else
+                                   ledger.claim(incident_id=id_, pid=job['pid'], process_create_time=job['generation']))
+                        if claimed:
                             try:
                                 state, reason = self.callback(job, outbox, self.cancel)
                                 if state not in ('RELEASED', 'REVIEW_REQUIRED', 'EXEMPTED'):
@@ -117,11 +138,17 @@ class ResponseJobs:
                                     except sqlite3.Error:
                                         # Diagnostic storage must not skip the durable review outcome.
                                         pass
+                            try:
+                                outbox.finish_response_timing(id_)
+                            except (OSError, sqlite3.Error):
+                                # Timing is diagnostic, never a new enforcement gate.
+                                pass
                             ledger.finish(id_, state=state, reason=reason)
                         else:
                             reason = 'previous_durable_reservation_no_retry'
                     with outbox.db:
                         outbox.db.execute('UPDATE response_jobs SET state=?,reason=? WHERE id=?', (state, reason, id_))
+                        promote(outbox.db, self.owner, id_)
                     self.active.clear()
                 with outbox.db:
                     outbox.db.execute("UPDATE response_jobs SET state='REVIEW_REQUIRED',reason='worker_stopped_before_start' WHERE owner=? AND state='READY'", (self.owner,))

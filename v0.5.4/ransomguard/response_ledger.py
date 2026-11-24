@@ -35,7 +35,25 @@ class ResponseLedger:
         self.db.commit()
 
         self.db.execute('CREATE TABLE IF NOT EXISTS exempt_response_history AS SELECT * FROM live_response_attempts WHERE 0')
+        self.db.execute('CREATE TABLE IF NOT EXISTS track_a_upgrade_history AS SELECT * FROM live_response_attempts WHERE 0')
+        self.db.execute('CREATE UNIQUE INDEX IF NOT EXISTS track_a_upgrade_once ON track_a_upgrade_history(incident_id)')
         self.db.commit()
+
+    def claim_track_a_upgrade(self, job) -> bool:
+        from .late_track_a import valid_proof, REVIEW_REASONS
+        if not valid_proof(job) or job.get('previous_review_reason') not in REVIEW_REASONS:
+            return False
+        self.db.execute('BEGIN IMMEDIATE')
+        with self.db:
+            row = self.db.execute('SELECT state,reason FROM live_response_attempts WHERE incident_id=? AND pid=? AND process_create_time=?',
+                                  (job['id'], job['pid'], job['generation'])).fetchone()
+            if row != ('REVIEW_REQUIRED', job['previous_review_reason']):
+                return False
+            if self.db.execute('SELECT 1 FROM track_a_upgrade_history WHERE incident_id=?', (job['id'],)).fetchone():
+                return False
+            self.db.execute('INSERT INTO track_a_upgrade_history SELECT * FROM live_response_attempts WHERE incident_id=?', (job['id'],))
+            self.db.execute("UPDATE live_response_attempts SET state='RESERVED',finished_at_utc=NULL,reason='new_corroborated_track_a_evidence' WHERE incident_id=?", (job['id'],))
+        return True
 
     @staticmethod
     def _validate(pid: int, process_create_time: int, incident_id: str) -> None:

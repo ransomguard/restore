@@ -7,22 +7,67 @@ import time
 class RecordConnection(sqlite3.Connection):
     record_active = False
     record_failed = False
+    writer_admission = None
+    writer_admitted = False
+
+    def execute(self, sql, parameters=()):
+        # All automatic-response reservations/appends and passive batches use
+        # explicit BEGIN IMMEDIATE. Hold admission for the actual transaction,
+        # never across firewall calls, JEV, recovery, or the kernel read loop.
+        begin = sql.strip().rstrip(';').upper() == 'BEGIN IMMEDIATE'
+        acquired = False
+        if begin and not self.in_transaction and self.writer_admission is not None:
+            self.writer_admission.acquire(self)
+            self.writer_admitted = acquired = True
+        try:
+            return super().execute(sql, parameters)
+        except BaseException:
+            if acquired:self._release_writer()
+            raise
+        finally:
+            if self.writer_admitted and not self.in_transaction:self._release_writer()
+
+    def executescript(self, script):
+        try:
+            return super().executescript(script)
+        finally:
+            if self.writer_admitted and not self.in_transaction:self._release_writer()
+
+    def _release_writer(self):
+        if self.writer_admitted:
+            self.writer_admitted = False
+            self.writer_admission.release(self)
 
     def commit(self):
         if not self.record_active:
-            return super().commit()
+            try:
+                return super().commit()
+            finally:
+                if not self.in_transaction:self._release_writer()
 
     def rollback(self):
         if self.record_active:
             self.record_failed = True
-        return super().rollback()
+        try:
+            return super().rollback()
+        finally:
+            if not self.in_transaction:self._release_writer()
 
     def __exit__(self, kind, error, traceback):
         if self.record_active:
             if kind is not None:
                 self.rollback()
             return False
-        return super().__exit__(kind, error, traceback)
+        try:
+            return super().__exit__(kind, error, traceback)
+        finally:
+            if not self.in_transaction:self._release_writer()
+
+    def close(self):
+        try:
+            return super().close()
+        finally:
+            self._release_writer()
 
     @contextmanager
     def atomic_record(self):
@@ -41,6 +86,7 @@ class RecordConnection(sqlite3.Connection):
             raise
         finally:
             self.record_active = False
+            if not self.in_transaction:self._release_writer()
 
 
 class PassiveBatch:

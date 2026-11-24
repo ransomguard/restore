@@ -33,7 +33,7 @@ def _filetime_number(value: _Filetime) -> int:
 
 
 class WindowsProcessSession:
-    def __init__(self, process: ProcessInstance):
+    def __init__(self, process: ProcessInstance, *, suspend_access: bool = False):
         if not isinstance(process, ProcessInstance):
             raise TypeError("Exact process PID and creation FILETIME are required")
         if os.name != "nt":
@@ -51,7 +51,7 @@ class WindowsProcessSession:
             fn = getattr(self.k, name)
             fn.argtypes, fn.restype = argtypes, restype
         # PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, not PROCESS_TERMINATE.
-        self.handle = self.k.OpenProcess(0x100000 | 0x1000, False, process.pid)
+        self.handle = self.k.OpenProcess(0x100000 | 0x1000 | (0x800 if suspend_access else 0), False, process.pid)
         if not self.handle:
             raise ProcessIdentityError("Cannot open live process handle to verify identity")
         try:

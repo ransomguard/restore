@@ -26,6 +26,8 @@ class EvidenceWindow:
         item['collection_window_seconds'] = self.seconds
         item['collection_source'] = 'automatic_kernel_observer'
         item['corroborating_kernel_events'] = []
+        item['collection_end_filetime'] = item['source_filetime'] + int(self.seconds * 10_000_000)
+        item['last_collection_sequence'] = item['source_sequence']
         self.pending[key] = (self.clock() + self.seconds, item)
         return 'collecting'
 
@@ -37,6 +39,11 @@ class EvidenceWindow:
             pid, generation = key
             if registry.generation_for(pid) != generation:
                 invalid.append(self.pending.pop(key)[1] | {'deferred_reason': 'process_generation_ended'})
+                continue
+            if event.sequence <= item['last_collection_sequence']:
+                continue
+            item['last_collection_sequence'] = event.sequence
+            if not item['source_filetime'] <= event.filetime <= item['collection_end_filetime']:
                 continue
             if (event.event_type == 3 and event.fields.get('parent_pid') == pid
                     and event.fields.get('creator_pid') == pid
@@ -73,10 +80,33 @@ class EvidenceWindow:
                 paths.append(path[:1024])
         return invalid
 
-    def due(self):
+    def due(self, *, caught_up=True):
+        if not caught_up:
+            return []
         now = self.clock()
         keys = [key for key, (deadline, _) in self.pending.items() if deadline <= now]
         return [self.pending.pop(key)[1] for key in keys]
+
+    def confirmed_a(self):
+        """Same generation + high-entropy protected write + creator-owned Rule."""
+        results = []
+        for key, (_, item) in list(self.pending.items()):
+            evidence = item['evidence']
+            if not evidence.get('trigger_flags', 0) & 8:
+                continue
+            for raw in item['corroborating_kernel_events']:
+                fields = raw['fields']
+                proof = {'pid': key[0], 'create_time': key[1], 'path': evidence['trigger_path'],
+                         'blocked_child_pid': raw['pid'], 'matched_rule_id': fields['matched_rule_id'],
+                         'write_filetime': item['source_filetime'], 'rule_filetime': raw['filetime'],
+                         'creator_pid': fields['creator_pid'], 'parent_pid': fields['parent_pid'],
+                         'high_entropy_write': True}
+                if 'queue_evidence_inspection' in item:
+                    proof['queue_evidence_inspection'] = item['queue_evidence_inspection']
+                results.append(proof)
+                self.pending.pop(key)
+                break
+        return results
 
     def invalidate(self, reason):
         items = [item | {'deferred_reason': reason} for _, item in self.pending.values()]

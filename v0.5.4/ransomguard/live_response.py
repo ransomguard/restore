@@ -60,6 +60,7 @@ class ResponseResult:
     recovery_snapshot_id: str | None = None
     recovered_files: list[str] = field(default_factory=list)
     recovery_root: str | None = None
+    review_followup: dict | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {"incident_id": self.incident_id, "track": self.track,
@@ -74,6 +75,7 @@ class ResponseResult:
                 "exit_confirmed": self.exit_confirmed, "recovery_verified": self.recovery_verified,
                 "recovery_snapshot_id": self.recovery_snapshot_id,
                 "recovered_files": self.recovered_files, "recovery_root": self.recovery_root,
+                "review_followup": self.review_followup,
                 "network_scope": "host_outbound", "wfp_enforcement_verified": False}
 
 
@@ -90,7 +92,8 @@ class LiveResponseCoordinator:
                  process_factory: Callable[[ProcessInstance], Any] = WindowsProcessSession,
                  thresholds: ResponseThresholds = ResponseThresholds(),
                  exit_timeout_ms: int = 5000,
-                 decision_guard: Callable[[], bool] | None = None) -> None:
+                 decision_guard: Callable[[], bool] | None = None,
+                 review_followup: Any | None = None) -> None:
         if type(exit_timeout_ms) is not int or not 100 <= exit_timeout_ms <= 60_000:
             raise ValueError("exit_timeout_ms must be between 100 and 60000")
         self.outbox = outbox
@@ -102,6 +105,7 @@ class LiveResponseCoordinator:
         self.thresholds = thresholds
         self.exit_timeout_ms = exit_timeout_ms
         self.decision_guard = decision_guard
+        self.review_followup = review_followup
 
     def _decision_allowed(self):
         try:
@@ -229,6 +233,7 @@ class LiveResponseCoordinator:
                 recovery_plan_provider: Callable[[], RecoveryPlan] | None = None,
                 recovery_required: bool = True,
                 track_a_confirmed: bool = False,
+                resume_jev_review: bool = False,
                 explicit_authorization: bool = False,
                 incident_id: str | None = None) -> ResponseResult:
         if explicit_authorization is not True:
@@ -239,6 +244,8 @@ class LiveResponseCoordinator:
             raise ValueError("Track must be A or B")
         if track == "A" and track_a_confirmed is not True:
             raise PermissionError("Track A must be explicitly confirmed using corroborated evidence")
+        if resume_jev_review and (track != 'A' or track_a_confirmed is not True):
+            raise PermissionError('Only corroborated Track A can resume a JEV-only review')
         if track == "B" and (not isinstance(jev_state, dict) or not jev_state):
             raise ValueError("Track B requires bounded nonempty JEV evidence")
         if recovery_plan is not None and not isinstance(recovery_plan, RecoveryPlan):
@@ -300,7 +307,11 @@ class LiveResponseCoordinator:
         try:
             # Even on timeout, the firewall manager stores a durable hold; a
             # missing/false ACK cannot be treated as proven filtering.
-            self.firewall.acquire(item.incident_id, track)
+            if resume_jev_review:
+                self.firewall.resume_track_a_review(item.incident_id)
+                self._log(item, 'late_track_a_hold_transferred', isolation_released=False)
+            else:
+                self.firewall.acquire(item.incident_id, track)
             item.firewall_hold_retained = True
             item.firewall_policy_acknowledged = True
             item.state = "POLICY_ACKNOWLEDGED"
@@ -367,4 +378,8 @@ class LiveResponseCoordinator:
                                           recovery_required=recovery_required,
                                           recovery_plan_provider=recovery_plan_provider)
         item.jev_classification = "ambiguous"
+        if self.review_followup is not None:
+            return self.review_followup.run(self, item, jev_state,
+                lambda: self._stop_and_restore(item, recovery_plan=recovery_plan,
+                    recovery_required=recovery_required, recovery_plan_provider=recovery_plan_provider))
         return self._review(item, "jev_ambiguous_demo_threshold")

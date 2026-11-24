@@ -266,8 +266,10 @@ def _observe(args: argparse.Namespace, *, shared_reader=None, reload_requested=N
     console_context = LiveConsole(control_path=Path(args.ready_file).parent/'console-display.json' if args.ready_file else None) if console_enabled else nullcontext()
     from .intake_scheduling import intake_priority
     with intake_priority(shared_reader), prepared_outbox() as outbox, make_reader() as reader, ui_context as ui_sink, response_owner_context as owner, console_context as live_console:
+        detached_ui = bool(getattr(args,'ui_durable',False) and hasattr(ui_sink,'enable_detached_spool'))
+        if detached_ui: ui_sink.enable_detached_spool()
         retention = RawRetention(outbox.db,grace_seconds=max(120,triage.config.window_seconds+triage.config.cooldown_seconds+30),
-                                 batch_limit=128,capacity_limit=512,interval=1) if getattr(args,"ui_durable",False) else None
+                                 batch_limit=128,capacity_limit=512,interval=1,detached_ui=detached_ui) if getattr(args,"ui_durable",False) else None
         response_ledger = ResponseLedger(outbox.db) if live_any and not async_live else None
         if (not live_any or async_live) and hasattr(ui_sink, 'use_enqueue_connection'):
             ui_sink.use_enqueue_connection(outbox.db)
@@ -335,7 +337,7 @@ def _observe(args: argparse.Namespace, *, shared_reader=None, reload_requested=N
             internal_collection = InternalCollection(Path(args.ready_file).parent)
             if shared_reader is not None:args._internal_collection=internal_collection
         from .delivery_pressure import DeliveryPressure
-        pressure=DeliveryPressure(outbox.db,outbox.max_pending) if publisher and args.ui_durable else None
+        pressure=DeliveryPressure(outbox.db,outbox.max_pending,detached_ui=detached_ui) if publisher and args.ui_durable else None
         last_status_poll = time.monotonic()
         def poll_status(event=None):
             nonlocal dropped_before,last_status_poll

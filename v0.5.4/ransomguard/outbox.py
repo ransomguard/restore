@@ -26,7 +26,8 @@ class OutboxFull(RuntimeError):
 
 
 class Outbox:
-    def __init__(self, path: str | Path, *, max_pending: int = 100_000):
+    def __init__(self, path: str | Path, *, max_pending: int = 100_000,
+                 connection_factory=RecordConnection):
         if max_pending < 1:
             raise ValueError("max_pending must be positive")
         self.path = Path(path)
@@ -35,7 +36,9 @@ class Outbox:
         self.local_diagnostics = False
         # UI ACKs and maintenance share this DB. A slow storage flush must not
         # kill the analysis worker at SQLite's default five-second busy limit.
-        self.db = sqlite3.connect(self.path, factory=RecordConnection, timeout=30)
+        self.db = sqlite3.connect(self.path, factory=connection_factory, timeout=30)
+        from .writer_admission import for_database
+        self.db.writer_admission = for_database(self.path)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")
         # The resident driver owner services WAL outside the processing path.

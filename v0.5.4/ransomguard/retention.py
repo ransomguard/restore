@@ -58,7 +58,7 @@ def initialize(db):
     db.commit()
 
 class RawRetention:
-    def __init__(self,db,*,grace_seconds=120,batch_limit=2000,capacity_limit=10000,interval=30):
+    def __init__(self,db,*,grace_seconds=120,batch_limit=2000,capacity_limit=10000,interval=30,detached_ui=False):
         if type(batch_limit) is not int or not 1 <= batch_limit <= 2000:
             raise ValueError('Invalid retention batch')
         if type(capacity_limit) is not int or not 1 <= capacity_limit <= 10000:
@@ -66,6 +66,7 @@ class RawRetention:
         if not 1 <= interval <= 30:
             raise ValueError('Invalid retention interval')
         self.db=db;self.grace=max(120,grace_seconds);self.last_run=0
+        self.detached_ui=detached_ui
         self.batch_limit=batch_limit;self.capacity_limit=capacity_limit;self.interval=interval
         initialize(db)
     def begin(self,event_id,event,generation):
@@ -82,6 +83,14 @@ class RawRetention:
                 WHERE event_id=? AND capacity_released=0 AND kind='kernel_event'
                   AND EXISTS(SELECT 1 FROM raw_retention r WHERE r.event_id=events.event_id
                     AND r.processed IS NOT NULL AND r.ui_state IN ('acked','not_required'))""",(event_id,))
+            if self.detached_ui:
+                # Release only the processing slot after analysis AND durable UI
+                # enqueue. Never acknowledge/delete evidence or bypass holds.
+                self.db.execute("""UPDATE events SET capacity_released=1
+                    WHERE event_id=? AND kind='kernel_event' AND capacity_released=0
+                    AND EXISTS(SELECT 1 FROM raw_retention r WHERE r.event_id=events.event_id AND r.processed IS NOT NULL)
+                    AND EXISTS(SELECT 1 FROM ui_delivery_tracking t JOIN ui_pending p ON p.id=t.delivery_id
+                               WHERE t.event_id=events.event_id)""",(event_id,))
     def resolution(self,result,outcomes):
         # Exemptions have a durable outbox audit but no fabricated threat alert.
         # Each raw event must still have its own UI receipt before deletion.

@@ -11,6 +11,26 @@ class RawQueue(queue.Queue):
         super()._put(item);self.bytes+=len(item);self.peak_bytes=max(self.peak_bytes,self.bytes)
     def _get(self):
         item=super()._get();self.bytes-=len(item);return item
+    def put_available(self, records, start=0):
+        """Enqueue a bounded FIFO prefix under one lock; never wait or evict.
+
+        The caller retains the suffix, using ordinary timed put when full.
+        Keep batches at the existing driver maximum so a consumer is not
+        locked out while an arbitrarily large Python list is inserted.
+        """
+        if not 0<=start<=len(records) or len(records)-start>128:
+            raise ValueError('Invalid intake batch')
+        for item in records[start:]:
+            if not isinstance(item,bytes) or len(item)>self.byte_limit:
+                raise ValueError('Invalid raw record size')
+        with self.not_full:
+            count=0
+            for item in records[start:]:
+                if self._qsize()>=self.maxsize or self.bytes+len(item)>self.byte_limit:break
+                self._put(item);self.unfinished_tasks+=1;count+=1
+            depth=self._qsize()
+            if count:self.not_empty.notify()
+            return count,depth
     def put(self, item, block=True, timeout=None):
         if not isinstance(item,bytes) or len(item)>self.byte_limit:raise ValueError('Invalid raw record size')
         if timeout is not None and timeout<0:raise ValueError('Invalid timeout')
@@ -46,14 +66,21 @@ class BufferedReader:
                 if elapsed>.5:
                     self.slow_read_count+=1;self.last_slow_read_at=time.time()
                 self.read_calls+=1;self.read_count+=len(records);self.peak_batch=max(self.peak_batch,len(records))
-                for index,raw in enumerate(records):
-                    while True:
-                        try:self.queue.put(raw,timeout=.05);self.peak=max(self.peak,self.queue.qsize());break
-                        except queue.Full:
-                            self.full_waits+=1
-                            if self.stop.is_set():self.tail=records[index:];return
-                        except BaseException:
-                            self.tail=records[index:];raise
+                index=0
+                while index<len(records):
+                    try:
+                        accepted,depth=self.queue.put_available(records,index)
+                        self.peak=max(self.peak,depth);index+=accepted
+                        if index==len(records):break
+                        # Full by count or bytes. Preserve the existing timed
+                        # wait and shutdown-tail behavior for the next record.
+                        self.queue.put(records[index],timeout=.05)
+                        index+=1;self.peak=max(self.peak,self.queue.qsize())
+                    except queue.Full:
+                        self.full_waits+=1
+                        if self.stop.is_set():self.tail=records[index:];return
+                    except BaseException:
+                        self.tail=records[index:];raise
                 self.max_cycle_seconds=max(self.max_cycle_seconds,time.monotonic()-cycle_started)
         except BaseException as error:self.error=error
     def read(self):

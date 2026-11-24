@@ -144,6 +144,7 @@ def live_result_to_ui_messages(result: Any, *, protected_root: str,
     decision = {
         'schemaVersion': 1, 'track': result.track, 'state': result.state,
         'reason': result.reason, 'jevScore': result.jev_score,
+        'reviewFollowup': getattr(result, 'review_followup', None),
         'jevClassification': result.jev_classification,
         'jevRequestId': result.jev_request_id,
         'jevModel': getattr(result, 'jev_model', None),
@@ -179,6 +180,11 @@ def live_result_to_ui_messages(result: Any, *, protected_root: str,
             data["filePath"] = observed_path[:1024]
         if track_a_blocked and track_a_corroborated:
             data["ruleName"] = "TRACK_A_CORROBORATED" if os.environ.get("RANSOM0_EVIDENCE_MODE") == "production" else "TRACK_A_CORROBORATED_LAB"
+        followup = getattr(result, 'review_followup', None) or {}
+        if review and followup.get('phase') == 'SUSPENDED':
+            data['ruleName'] = 'TRACK_B · 일시정지 요청 수락 · 검토 필요'
+        elif review and followup.get('phase') in ('REQUESTING', 'RESUME_REQUESTED'):
+            data['ruleName'] = 'TRACK_B · 정지/재개 결과 불확실 · 검토 필요'
         messages.append({"type": "ALERT", "timestamp": stamp, "data": data})
     unavailable = {
         'recovery_snapshot_stale_or_not_preincident': 'Automatic recovery unavailable: no sufficiently recent pre-incident VSS; review hold retained; no restore writes performed',

@@ -9,6 +9,8 @@ import sqlite3
 import threading
 import uuid
 import time
+import shutil
+from pathlib import Path
 from contextlib import nullcontext, contextmanager
 from .ui_pipe import WindowsUiPipe, encode_ui_jsonl, LEGACY_BATCH_ITEMS, MAX_BATCH_ITEMS, MAX_MESSAGE_BYTES
 
@@ -84,6 +86,12 @@ class DurableUiDelivery:
                         'max_exchange_seconds': 0.0, 'max_ack_db_seconds': 0.0}
         self.enqueue_db = None
         self.batch_limit = LEGACY_BATCH_ITEMS
+        self.detached_ui = False
+        self.spool_byte_limit = 512*1024*1024
+        self.disk_reserve = 2*1024*1024*1024
+        self._disk_checked = 0.0
+        self._disk_free = 0
+        self.path = Path(path).absolute()
         self.capacity_table_supported = 'capacity_released' in {r[1] for r in self.db.execute('PRAGMA table_info(events)')}
 
     def use_enqueue_connection(self, db):
@@ -95,6 +103,43 @@ class DurableUiDelivery:
             raise ValueError('UI enqueue must share the same outbox database')
         self.enqueue_db = db
         self.capacity_table_supported = 'capacity_released' in {r[1] for r in db.execute('PRAGMA table_info(events)')}
+
+    def enable_detached_spool(self):
+        # Install once, with an atomic initial count. ACK/delete triggers keep
+        # the budget exact without repeated scans or in-memory event copies.
+        with self.lock:
+            # Response publishers open a short-lived sink on the same database.
+            # Reuse the initialized accounting without scanning the backlog or
+            # taking a schema write lock for every completed response.
+            objects = {r[0] for r in self.db.execute(
+                "SELECT name FROM sqlite_master WHERE name IN "
+                "('ui_spool_bytes','ui_spool_insert','ui_spool_delete','ui_spool_update')")}
+            if len(objects) == 4 and self.db.execute(
+                    'SELECT 1 FROM ui_spool_bytes WHERE singleton=1').fetchone():
+                self.detached_ui = True
+                return
+            self.db.executescript('''BEGIN IMMEDIATE;
+              CREATE TABLE IF NOT EXISTS ui_spool_bytes(singleton INTEGER PRIMARY KEY CHECK(singleton=1),bytes INTEGER NOT NULL);
+              INSERT OR IGNORE INTO ui_spool_bytes SELECT 1,COALESCE(SUM(length(CAST(payload AS BLOB))),0) FROM ui_pending;
+              CREATE TRIGGER IF NOT EXISTS ui_spool_insert AFTER INSERT ON ui_pending BEGIN
+                UPDATE ui_spool_bytes SET bytes=bytes+length(CAST(NEW.payload AS BLOB)) WHERE singleton=1; END;
+              CREATE TRIGGER IF NOT EXISTS ui_spool_delete AFTER DELETE ON ui_pending BEGIN
+                UPDATE ui_spool_bytes SET bytes=bytes-length(CAST(OLD.payload AS BLOB)) WHERE singleton=1; END;
+              CREATE TRIGGER IF NOT EXISTS ui_spool_update AFTER UPDATE OF payload ON ui_pending BEGIN
+                UPDATE ui_spool_bytes SET bytes=bytes+length(CAST(NEW.payload AS BLOB))-length(CAST(OLD.payload AS BLOB)) WHERE singleton=1; END;
+              COMMIT;''')
+            self.detached_ui = True
+
+    def check_spool_budget(self, db, encoded):
+        used=db.execute('SELECT bytes FROM ui_spool_bytes WHERE singleton=1').fetchone()[0]
+        if used+len(encoded.encode('utf8'))>self.spool_byte_limit:
+            raise RuntimeError('Durable UI spool byte budget exhausted; evidence retained')
+        now=time.monotonic()
+        if now-self._disk_checked>=1 or not self._disk_checked:
+            self._disk_free=shutil.disk_usage(self.path.parent).free
+            self._disk_checked=now
+        if self._disk_free<self.disk_reserve:
+            raise RuntimeError('Durable UI spool disk reserve exhausted; evidence retained')
 
     def send(self, message):
         return self.send_tracked(message)
@@ -111,7 +156,9 @@ class DurableUiDelivery:
             if message.get("type") == "SYSTEM_STATUS":
                 self.status = message
             else:
-                if db.execute("SELECT pending FROM ui_pending_capacity WHERE singleton=1").fetchone()[0] >= self.max_pending:
+                if self.detached_ui:
+                    self.check_spool_budget(db,encoded)
+                elif db.execute("SELECT pending FROM ui_pending_capacity WHERE singleton=1").fetchone()[0] >= self.max_pending:
                     raise RuntimeError("Durable UI queue full; raw outbox retained, intake stopped")
                 delivery_id=str(uuid.uuid4())
                 db.execute("INSERT INTO ui_pending(id,payload) VALUES(?,?)", (delivery_id, encoded))

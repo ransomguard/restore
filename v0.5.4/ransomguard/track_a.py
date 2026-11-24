@@ -40,4 +40,7 @@ class TrackACorroborator:
         if registry.generation_for(parent) != generation or not 0 <= event.filetime-stamp <= 100_000_000:
             return None
         return {'pid':parent, 'create_time':generation, 'path':path,
-                'blocked_child_pid':event.pid, 'matched_rule_id':event.fields['matched_rule_id']}
+                'blocked_child_pid':event.pid, 'matched_rule_id':event.fields['matched_rule_id'],
+                'write_filetime':stamp, 'rule_filetime':event.filetime,
+                'creator_pid':event.fields['creator_pid'], 'parent_pid':parent,
+                'high_entropy_write':True}
