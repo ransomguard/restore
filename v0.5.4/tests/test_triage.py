@@ -77,7 +77,37 @@ class TriageTests(unittest.TestCase):
         result = self.write(4, path=r"C:\lab\current.txt")[0].payload
         self.assertEqual(result["counts"]["write_attempts"], 1)
         self.assertEqual(result["counts"]["rename_attempts"], 1)
-        self.assertNotIn(r"C:\lab\expired.txt", result["evidence"]["sample_source_paths"])
+        self.assertIn(r"C:\lab\expired.txt", result["evidence"]["sample_source_paths"])
+        self.assertEqual(result['evidence']['sample_paths_window_seconds'], 180)
+
+    def test_slow_paths_survive_cooldown_without_inflating_counts(self):
+        self.create()
+        records=[]
+        for i in range(7):
+            self.clock.value=i*5
+            records=self.write(i+2,path='C:\\lab\\file%d.txt'%i)
+        item=records[0].payload
+        self.assertEqual(len(item['evidence']['sample_source_paths']),7)
+        self.assertEqual(item['counts']['write_attempts'],2)
+        self.assertEqual(item['counts']['high_entropy_writes'],2)
+
+    def test_longer_path_window_has_same_capacity_and_expires(self):
+        self.create()
+        for i in range(40):
+            self.clock.value=i
+            self.write(i+2,path='C:\\lab\\file%d.txt'%i)
+            self.assertLessEqual(len(self.triage._states[1234].paths),8)
+        self.clock.value=221
+        item=self.write(42,path='C:\\lab\\new.txt')[0].payload
+        self.assertEqual(item['evidence']['sample_source_paths'],['C:\\lab\\new.txt'])
+
+    def test_candidate_path_context_cleared_on_pid_reuse(self):
+        self.create()
+        self.write(2,path='C:\\lab\\old.txt')
+        self.clock.value=15
+        self.create(3,created=1001)
+        item=self.write(4,generation=1001,path='C:\\lab\\new.txt')[0].payload
+        self.assertEqual(item['evidence']['sample_source_paths'],['C:\\lab\\new.txt'])
 
     def test_pid_reuse_resets_evidence_and_cooldown(self):
         self.create()

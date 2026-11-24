@@ -234,6 +234,7 @@ class LiveResponseCoordinator:
                 recovery_required: bool = True,
                 track_a_confirmed: bool = False,
                 resume_jev_review: bool = False,
+                resume_b_review: bool = False,
                 explicit_authorization: bool = False,
                 incident_id: str | None = None) -> ResponseResult:
         if explicit_authorization is not True:
@@ -246,6 +247,10 @@ class LiveResponseCoordinator:
             raise PermissionError("Track A must be explicitly confirmed using corroborated evidence")
         if resume_jev_review and (track != 'A' or track_a_confirmed is not True):
             raise PermissionError('Only corroborated Track A can resume a JEV-only review')
+        if resume_b_review:
+            from .late_track_b import new_verified_facts
+            if track!='B' or resume_jev_review or not new_verified_facts({'evidence':jev_state,'prior_changed_paths':(jev_state or {}).get('reassessment_prior_changed_paths',[])}):
+                raise PermissionError('Track B reassessment requires new verified file effects')
         if track == "B" and (not isinstance(jev_state, dict) or not jev_state):
             raise ValueError("Track B requires bounded nonempty JEV evidence")
         if recovery_plan is not None and not isinstance(recovery_plan, RecoveryPlan):
@@ -307,7 +312,10 @@ class LiveResponseCoordinator:
         try:
             # Even on timeout, the firewall manager stores a durable hold; a
             # missing/false ACK cannot be treated as proven filtering.
-            if resume_jev_review:
+            if resume_b_review:
+                self.firewall.resume_track_b_review(item.incident_id)
+                self._log(item,'track_b_review_hold_retained',isolation_released=False)
+            elif resume_jev_review:
                 self.firewall.resume_track_a_review(item.incident_id)
                 self._log(item, 'late_track_a_hold_transferred', isolation_released=False)
             else:
@@ -378,7 +386,7 @@ class LiveResponseCoordinator:
                                           recovery_required=recovery_required,
                                           recovery_plan_provider=recovery_plan_provider)
         item.jev_classification = "ambiguous"
-        if self.review_followup is not None:
+        if self.review_followup is not None and not resume_b_review:
             return self.review_followup.run(self, item, jev_state,
                 lambda: self._stop_and_restore(item, recovery_plan=recovery_plan,
                     recovery_required=recovery_required, recovery_plan_provider=recovery_plan_provider))

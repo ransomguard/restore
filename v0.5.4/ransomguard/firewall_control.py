@@ -166,6 +166,22 @@ class FirewallHoldManager:
             raise
         return {'state': 'policy_acknowledged', 'wfp_enforcement_verified': False}
 
+    def resume_track_b_review(self, incident_id: str) -> dict[str, Any]:
+        """Retain the existing B hold for a durably claimed fresh-evidence review."""
+        self._begin()
+        try:
+            old=self.db.execute('SELECT track,state FROM firewall_holds WHERE incident_id=?',(incident_id,)).fetchone()
+            owner=self._profile_row()
+            if (old!=('B','review_required') or owner is None or not owner[1]
+                    or owner[0]!=self.profile.allowlist or owner[2]!=self.profile.direction
+                    or not self._response_matches(self.client.request('get'))):
+                raise FirewallHoldError('Track B reassessment has no matching acknowledged policy')
+            self.db.execute("UPDATE firewall_holds SET state='acknowledged' WHERE incident_id=?",(incident_id,))
+            self.db.commit()
+        except BaseException:
+            self.db.rollback();raise
+        return {'state':'policy_acknowledged','wfp_enforcement_verified':False}
+
     def acquire(self, incident_id: str, track: str) -> dict[str, Any]:
         """Record an incident hold, then request the global outbound block.
 

@@ -4,6 +4,21 @@ from unittest.mock import patch
 from ransomguard import console_stream as c
 
 class ConsoleStreamTests(unittest.TestCase):
+    def test_review_stages_and_timing_keep_exact_audit_payload(self):
+        for kind in ('review_suspend_requested', 'review_suspend_acknowledged',
+                     'review_additional_file_evidence', 'review_required',
+                     'response_path_timing'):
+            payload={'score':0.76,'termination_confirmed':False}
+            with patch.object(c,'emit') as emit:
+                c.audit('runtime',kind,payload,'event','incident','now',True)
+            emit.assert_called_once()
+            runtime,channel,line=emit.call_args.args
+            self.assertEqual((runtime,channel),('runtime','response'))
+            item=json.loads(line)
+            self.assertEqual(item['payload'],payload)
+            self.assertEqual(item['storage_state'],'pending_commit')
+            self.assertEqual(item['kind'],kind)
+
     def test_event_fanout_resolves_runtime_only_once_for_all_channels(self):
         c._runtime_digest.cache_clear()
         from pathlib import Path

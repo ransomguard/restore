@@ -76,6 +76,12 @@ class ResponseJobs:
                     db.commit()
                     self.wake.set()
                     return 'TRACK_A_PROMOTED' if promoted else 'TRACK_A_EVIDENCE_RETAINED'
+                from .late_track_b import promote as promote_b
+                pending = db.execute("SELECT count(*) FROM response_jobs WHERE owner=? AND state IN ('READY','RUNNING')", (self.owner,)).fetchone()[0]
+                if pending < self.max_pending and promote_b(db,self.owner,previous[0],job):
+                    job['id']=previous[0]
+                    db.commit();self.wake.set()
+                    return 'TRACK_B_NEW_EVIDENCE_REASSESSMENT'
                 return 'duplicate'
             pending = db.execute("SELECT count(*) FROM response_jobs WHERE owner=? AND state IN ('READY','RUNNING')", (self.owner,)).fetchone()[0]
             state = 'READY' if pending < self.max_pending else 'REVIEW_REQUIRED'
@@ -118,7 +124,8 @@ class ResponseJobs:
                     job = json.loads(payload)
                     state, reason = 'REVIEW_REQUIRED', 'response_cancelled_before_start'
                     if not self.cancel.is_set():
-                        claimed = (ledger.claim_track_a_upgrade(job) if job.get('resume_jev_review') else
+                        claimed = (ledger.claim_track_b_reassessment(job) if job.get('resume_b_review') else
+                                   ledger.claim_track_a_upgrade(job) if job.get('resume_jev_review') else
                                    ledger.claim(incident_id=id_, pid=job['pid'], process_create_time=job['generation']))
                         if claimed:
                             try:

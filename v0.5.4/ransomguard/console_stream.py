@@ -125,7 +125,7 @@ def audit(runtime, kind, payload, event_id, incident_id, occurred_at, staged):
     channels = []
     if re.match(r'^(triage_|track_[ab]_|jev_|detection_recorded|live_candidate_|automatic_(response|jev|file|evidence)_|local_ui_live_response)', kind):
         channels.append('decision')
-    if re.match(r'^(host_outbound_|firewall_|incident_firewall_|termination_|kernel_termination_|process_exit_confirmed|restore_|release_|review_required|automatic_response_|local_ui_live_response|snapshot_)', kind):
+    if re.match(r'^(host_outbound_|firewall_|incident_firewall_|termination_|kernel_termination_|process_exit_confirmed|restore_|release_|review_|response_path_timing$|automatic_response_|local_ui_live_response|snapshot_)', kind):
         channels.append('response')
     if not channels:
         return

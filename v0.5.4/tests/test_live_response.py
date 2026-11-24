@@ -121,6 +121,32 @@ class ResponseTests(unittest.TestCase):
         self.assertFalse(self.fake_fw.active)
         self.assertEqual(self.jev.calls, [{"counts": {"write": 2}}])
 
+    def test_fresh_b_review_retains_hold_until_verified_restore(self):
+        self.jev.score = 0.68
+        self.respond_b(incident_id='fresh-b')
+        self.jev.score = 0.8
+        evidence = {'reassessment_prior_changed_paths':['a'], 'verified_write_effects':{
+            'changed_relative_paths':['a','b'], 'files_unverified':0, 'bounded_scan_incomplete':False}}
+        result = self.coordinator.respond(track='B', process=self.process, incident_id='fresh-b',
+            jev_state=evidence, resume_b_review=True, explicit_authorization=True,
+            recovery_plan=sample_recovery_plan())
+        self.assertEqual(result.state, 'RELEASED')
+        self.assertTrue(result.exit_confirmed)
+        self.assertEqual(len(self.driver.calls), 1)
+        self.assertEqual([a for a,_ in self.fake_fw.calls].count('on'), 1)
+        self.assertEqual([a for a,_ in self.fake_fw.calls].count('off'), 1)
+
+    def test_fresh_b_still_ambiguous_keeps_hold_without_termination(self):
+        self.jev.score = 0.79
+        self.respond_b(incident_id='fresh-b')
+        evidence = {'reassessment_prior_changed_paths':['a'], 'verified_write_effects':{
+            'changed_relative_paths':['a','b'], 'files_unverified':0, 'bounded_scan_incomplete':False}}
+        result = self.coordinator.respond(track='B', process=self.process, incident_id='fresh-b',
+            jev_state=evidence, resume_b_review=True, explicit_authorization=True)
+        self.assertEqual(result.reason, 'jev_ambiguous_demo_threshold')
+        self.assertFalse(self.driver.calls)
+        self.assertTrue(self.fake_fw.active)
+
     def test_malicious_b_requires_exit_and_verified_restore_before_release(self):
         item = self.respond_b(recovery_plan=sample_recovery_plan())
         self.assertEqual(item.state, "RELEASED")

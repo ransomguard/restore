@@ -159,9 +159,16 @@ class TriageIntake:
         cutoff = now - self.config.window_seconds
         while state.observations and state.observations[0].at <= cutoff:
             state.observations.popleft()
+        # Counts retain their original short window. A previously emitted,
+        # generation-scoped candidate keeps the same bounded path map longer,
+        # so the 30-second emission cooldown cannot erase slow-write context.
+        path_cutoff = now - self._path_window(state)
         for path, observed_at in list(state.paths.items()):
-            if observed_at <= cutoff:
+            if observed_at <= path_cutoff:
                 del state.paths[path]
+
+    def _path_window(self, state: _ProcessState) -> float:
+        return max(self.config.window_seconds, 180.0) if state.last_emitted_at is not None and state.generation is not None else self.config.window_seconds
 
     def ingest(self, event: Event, *, correlated_create_time: int | None,
                ignore_file_evidence: bool = False,
@@ -279,6 +286,9 @@ class TriageIntake:
             evidence={"trigger_flags": flags, "trigger_path": path,
                       "trigger_path_clipped": isinstance(raw_path, str) and len(raw_path) > 1024,
                       "sample_source_paths": list(state.paths),
+                      "sample_paths_window_seconds": self._path_window(state),
+                      "sample_paths_capacity": self.config.max_paths_per_process,
+                      "sample_paths_count_window_independent": True,
                       "sample_paths_are_complete": False,
                       "operation_result": "unknown_pre_operation"},
             containment_confirmed=False, jev_requested=False, termination_requested=False,

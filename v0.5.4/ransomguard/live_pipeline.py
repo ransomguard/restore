@@ -151,6 +151,17 @@ class LivePipeline:
             except (OSError,ValueError):
                 job['evidence']['file_comparison_unavailable']=True
         if job['track']=='B':
+            if job.get('resume_b_review'):
+                from .late_track_b import new_verified_facts
+                if not guard() or not new_verified_facts(job):
+                    outbox.append('track_b_reassessment_deferred',{'reason':'no_new_verified_file_effects','hold_retained':True},incident_id=job['id'])
+                    return 'REVIEW_REQUIRED','jev_ambiguous_demo_threshold'
+                job['evidence']['reassessment_prior_changed_paths']=job['prior_changed_paths']
+                outbox.append('track_b_new_evidence_reassessment',{'prior_changed_paths':job['prior_changed_paths'],'verified_write_effects':job['evidence']['verified_write_effects'],'thresholds_unchanged':True},incident_id=job['id'])
+            # Retain the measured first evidence for a later bounded upgrade.
+            import json
+            with outbox.db:
+                outbox.db.execute('UPDATE response_jobs SET payload=? WHERE id=? AND state=\'RUNNING\'',(json.dumps(job,ensure_ascii=False),job['id']))
             outbox.append('automatic_jev_evidence',job['evidence'],incident_id=job['id'])
         provider = (None if args.response_no_recovery_required else
                     lambda: recovery_plan_from_template(args.response_manifest_template,
@@ -182,6 +193,7 @@ class LivePipeline:
                 jev_state=job['evidence'], recovery_plan_provider=provider,
                 recovery_required=not args.response_no_recovery_required,
                 resume_jev_review=job.get('resume_jev_review', False),
+                resume_b_review=job.get('resume_b_review', False),
                 track_a_confirmed=job['track']=='A', explicit_authorization=True, incident_id=job['id'])
         if result.exit_confirmed:
             try:

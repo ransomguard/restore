@@ -39,6 +39,22 @@ class ResponseLedger:
         self.db.execute('CREATE UNIQUE INDEX IF NOT EXISTS track_a_upgrade_once ON track_a_upgrade_history(incident_id)')
         self.db.commit()
 
+        self.db.execute('CREATE TABLE IF NOT EXISTS track_b_reassessment_history AS SELECT * FROM live_response_attempts WHERE 0')
+        self.db.execute('CREATE UNIQUE INDEX IF NOT EXISTS track_b_reassessment_once ON track_b_reassessment_history(incident_id)')
+        self.db.commit()
+
+    def claim_track_b_reassessment(self, job) -> bool:
+        from .late_track_b import REASON
+        if job.get('track')!='B' or job.get('resume_b_review') is not True or job.get('previous_review_reason')!=REASON:return False
+        self._validate(job['pid'],job['generation'],job['id'])
+        self.db.execute('BEGIN IMMEDIATE')
+        with self.db:
+            row=self.db.execute('SELECT state,reason FROM live_response_attempts WHERE incident_id=? AND pid=? AND process_create_time=?',(job['id'],job['pid'],job['generation'])).fetchone()
+            if row!=('REVIEW_REQUIRED',REASON) or self.db.execute('SELECT 1 FROM track_b_reassessment_history WHERE incident_id=?',(job['id'],)).fetchone():return False
+            self.db.execute('INSERT INTO track_b_reassessment_history SELECT * FROM live_response_attempts WHERE incident_id=?',(job['id'],))
+            self.db.execute("UPDATE live_response_attempts SET state='RESERVED',finished_at_utc=NULL,reason='new_track_b_evidence' WHERE incident_id=?",(job['id'],))
+        return True
+
     def claim_track_a_upgrade(self, job) -> bool:
         from .late_track_a import valid_proof, REVIEW_REASONS
         if not valid_proof(job) or job.get('previous_review_reason') not in REVIEW_REASONS:
