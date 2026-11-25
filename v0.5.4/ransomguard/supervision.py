@@ -39,15 +39,18 @@ def assess(processes, runtime, ready, *, db_path, ui_path, daemon_path, authoriz
     allowed_live = authorized_live_mode in ('scoped-live-track-a','scoped-live-track-b','scoped-live-track-a-b')
     if runtime.get("mode") != "observe-only" and not (allowed_live and runtime.get('mode')==authorized_live_mode):
         return "manual_attention", "not_passive_runtime"
+    observers = [p for p in processes if _observer(p, db_path)]
+    current = (ready.get("driver_registered") is True and _path(ready.get("db")) == _path(db_path)
+               and any(p["ProcessId"] == ready.get("pid") for p in observers))
+    if current and ready.get('resident') and ready.get('worker_state') == 'failed':
+        return 'manual_attention', 'resident_worker_failed_intake_retained'
     if not known(runtime.get("ui"), ui_path):
         return "manual_attention", "ui_closed_or_missing"
     if not known(runtime.get("daemon"), daemon_path):
         return "manual_attention", "firewall_daemon_missing"
-    observers = [p for p in processes if _observer(p, db_path)]
     if not observers:
         return "restart_collector", "collector_absent"
-    if (ready.get("driver_registered") is True and _path(ready.get("db")) == _path(db_path)
-            and any(p["ProcessId"] == ready.get("pid") for p in observers)):
+    if current:
         if ready.get('resident'):
             if ready.get('worker_state') != 'running':
                 return 'manual_attention', 'resident_worker_failed_intake_retained'

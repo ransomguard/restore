@@ -48,6 +48,61 @@ def source_revision(source):
     return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
 
 
+def log_windows_failure(record):
+    """Report to the Windows Application log independently of the product volume's DB."""
+    if os.name != 'nt':
+        return
+    import ctypes
+    from ctypes import wintypes
+    api = ctypes.WinDLL('advapi32', use_last_error=True)
+    api.RegisterEventSourceW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    api.RegisterEventSourceW.restype = wintypes.HANDLE
+    api.ReportEventW.argtypes = [wintypes.HANDLE, wintypes.WORD, wintypes.WORD,
+        wintypes.DWORD, wintypes.LPVOID, wintypes.WORD, wintypes.DWORD,
+        ctypes.POINTER(wintypes.LPCWSTR), wintypes.LPVOID]
+    api.DeregisterEventSource.argtypes = [wintypes.HANDLE]
+    handle = api.RegisterEventSourceW(None, 'Ransom0')
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        strings = (wintypes.LPCWSTR * 1)(json.dumps(record, ensure_ascii=True))
+        if not api.ReportEventW(handle, 1, 0, 1001, None, 1, 0, strings, None):
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        api.DeregisterEventSource(handle)
+
+
+def publish_failure(ready, result_path, args, reader, error):
+    progress = args._resident_info
+    stamp = time.time()
+    pending = reader.queue.qsize()
+    failure = {'resident_session': progress['resident_session'],
+               'worker_generation': progress['worker_generation'],
+               'pid': os.getpid(), 'worker_state': 'failed', 'worker_failed_at': stamp,
+               'worker_error': str(error)[:2048], 'pending_intake': pending,
+               'last_processed_sequence': progress.get('last_processed_sequence')}
+    try:
+        log_windows_failure(failure)
+    except OSError as exc:
+        print(f'Unable to write Windows failure event: {exc}', file=sys.stderr)
+    try:
+        health = json.loads(ready.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        health = {}
+    if (not isinstance(health, dict) or health.get('resident_session') != progress['resident_session']
+            or health.get('worker_generation') != progress['worker_generation']):
+        health = {'resident': True, 'driver_registered': True, 'db': str(Path(args.db).resolve())}
+    health.update(failure)
+    receipt = {'state': 'worker_failed', 'request_id': progress.get('reload_request_id'),
+               'pid': failure['pid'], 'at': stamp, 'error': failure['worker_error'],
+               'intake_running': True, 'buffer': reader.diagnostics()}
+    for path, value in ((ready, health), (result_path, receipt)):
+        try:
+            write_json(path, value)
+        except OSError as exc:
+            print(f'Unable to publish worker failure to {path.name}: {exc}', file=sys.stderr)
+
+
 def request_reload(ready_path, source, *, ui_process_id=None):
     ready_path = Path(ready_path)
     ready = json.loads(ready_path.read_text(encoding='utf-8'))
@@ -219,15 +274,7 @@ def run(args, *, factory=WindowsDriverReader):
                 if handover.pending is not None:
                     handover.pending.unload()
                     handover.pending = None
-                write_json(result_path, {'state': 'worker_failed', 'request_id': request_id,
-                    'error': str(error), 'pid': os.getpid(), 'at': time.time(),
-                    'intake_running': True, 'buffer': reader.diagnostics()})
-                try:
-                    health = json.loads(ready.read_text(encoding='utf-8'))
-                    health.update(worker_state='failed', worker_error=str(error))
-                    write_json(ready, health)
-                except (OSError, ValueError):
-                    pass
+                publish_failure(ready, result_path, args, reader, error)
             if ready.with_suffix('.stop').exists() or args.limit:
                 break
             if not failed and handover.pending is None:

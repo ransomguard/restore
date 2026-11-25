@@ -54,6 +54,9 @@ class SupervisionTests(unittest.TestCase):
         self.assertEqual(self.check(self.processes+[self.observer])[1],'resident_worker_health_stale')
         self.ready['worker_state']='failed'
         self.assertEqual(self.check(self.processes+[self.observer])[1],'resident_worker_failed_intake_retained')
+        self.assertEqual(self.check([self.observer])[1],'resident_worker_failed_intake_retained')
+        self.ready['pid']=4
+        self.assertEqual(self.check([self.observer])[1],'ui_closed_or_missing')
 
     def test_restart_budget_and_clock_rollback(self):
         self.assertFalse(allow_restart([901, 902, 903], 1000)[0])

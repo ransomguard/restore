@@ -23,9 +23,14 @@ def report(runtime, *, now=None):
     if protection.get('ready') and protection_age>7200:
         protection.update(ready=False,reason='baseline_status_stale',
             detail='복구 목록 상태를 2시간 넘게 갱신하지 못했습니다. 스냅샷 작업 상태를 확인하세요.')
-    age=max(0,now-ready.get('observed_at',0))
+    observed=ready.get('observed_at')
+    age=now-observed if type(observed) in (int,float) else None
     counters=ready.get('counter_totals',{})
-    return {'at':now,'collector_ready':ready.get('worker_state')=='running' and age<15,
+    return {'at':now,'collector_ready':ready.get('worker_state')=='running' and
+            ready.get('driver_registered') is True and age is not None and 0<=age<15,
+            'worker_state':ready.get('worker_state'),'worker_error':ready.get('worker_error'),
+            'worker_failed_at':ready.get('worker_failed_at'),
+            'last_processed_sequence':ready.get('last_processed_sequence'),
             'heartbeat_age_seconds':age,'collector_pid':ready.get('pid'),
             'counters':counters,'queue':ready.get('driver_status',{}).get('intake_queue_depth'),
             'pending_intake':ready.get('pending_intake'),'recovery':protection,

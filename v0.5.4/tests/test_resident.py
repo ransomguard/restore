@@ -16,6 +16,36 @@ from tests.test_cli_integration import event_stream
 
 
 class ResidentTests(unittest.TestCase):
+    def test_corrupt_test_db_reports_failure_without_reading_or_repairing_it(self):
+        from queue import Queue
+        from types import SimpleNamespace
+        from ransomguard.health_report import report
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'events.db'
+            path.write_bytes(b'invalid test database header' * 40)
+            original = path.read_bytes()
+            ready = root / 'observer-ready.json'
+            ready.write_text('{"worker_generation":0,"counter_totals":{"events_dropped":999}}')
+            args = SimpleNamespace(db=path, _resident_info={
+                'resident_session':'test', 'worker_generation':1, 'last_processed_sequence':72})
+            reader = SimpleNamespace(queue=Queue(), diagnostics=lambda: {'read':74})
+            reader.queue.put(b'pending')
+            receipt = root / 'receipt.json'
+            with self.assertRaises(sqlite3.DatabaseError) as caught:
+                with contextlib.closing(sqlite3.connect(path.as_uri()+'?mode=ro', uri=True)) as db:
+                    db.execute('SELECT name FROM sqlite_master').fetchall()
+            with patch.object(resident, 'log_windows_failure') as independent:
+                resident.publish_failure(ready, receipt, args, reader, caught.exception)
+            self.assertEqual(independent.call_args.args[0]['last_processed_sequence'],72)
+            current=report(root)
+            self.assertFalse(current['collector_ready'])
+            self.assertEqual(current['worker_state'],'failed')
+            self.assertEqual(current['pending_intake'],1)
+            self.assertEqual(current['counters'],{})
+            self.assertEqual(json.loads(receipt.read_text())['state'],'worker_failed')
+            self.assertEqual(path.read_bytes(),original)
+
     def test_new_owner_resumes_process_monitor_without_resetting_counters_or_mode(self):
         import struct
         from ransomguard.protocol import UPDATE_POLICY,MAGIC,VERSION

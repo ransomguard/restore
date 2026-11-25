@@ -207,6 +207,7 @@ def _observe(args: argparse.Namespace, *, shared_reader=None, reload_requested=N
     triage = TriageIntake(TriageConfig(**config.get("triage", {})))
     count = 0
     raw_events_read = 0
+    progress = getattr(args, '_resident_info', None)
     storage_events_skipped = 0
     from .ui_delivery import DurableUiDelivery, resident_delivery
     ui_context = ((resident_delivery(args, args.db) if shared_reader is not None else DurableUiDelivery(args.db))
@@ -432,6 +433,8 @@ def _observe(args: argparse.Namespace, *, shared_reader=None, reload_requested=N
                     for skipped in triage.ingest(event, correlated_create_time=None, ignore_file_evidence=True):
                         outbox.append(skipped.kind, skipped.payload)
                     raw_events_read += 1
+                    if progress is not None:
+                        progress['last_processed_sequence'] = event.sequence
                     raw = None
                     if time.monotonic()-last_status_poll>=1:poll_status(event)
                     continue
@@ -596,6 +599,9 @@ def _observe(args: argparse.Namespace, *, shared_reader=None, reload_requested=N
                         if not getattr(args, "quiet_events", False):
                             print(json.dumps({"kind": event.kind, "pid": event.pid, "sequence": event.sequence}, ensure_ascii=False))
                         count += 1
+                # Processing progress only. A passive batch may still await its commit.
+                if progress is not None:
+                    progress['last_processed_sequence'] = event.sequence
                 if raw_events_read % args.status_every == 0 or time.monotonic()-last_status_poll>=1:
                     poll_status(event)
         except KeyboardInterrupt:

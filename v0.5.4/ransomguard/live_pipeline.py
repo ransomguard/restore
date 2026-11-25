@@ -82,6 +82,9 @@ class LivePipeline:
             self.window.pending.pop((pid, generation), None)
         self.outbox.append('automatic_response_queued',
                            {'pid': pid, 'process_create_time': generation, 'track': track,
+                            'evidence_filetime': payload.get('write_filetime') if track == 'A'
+                                                 else payload.get('source_filetime'),
+                            'trigger_filetime': filetime,
                             'queue_state': outcome, 'asynchronous': True}, incident_id=job['id'])
 
     def tick(self):
