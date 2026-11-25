@@ -5,6 +5,7 @@ is enqueued. SYSTEM_STATUS is transient and coalesced, never replayed.
 """
 from __future__ import annotations
 import json
+import os
 import sqlite3
 import threading
 import uuid
@@ -80,6 +81,9 @@ class DurableUiDelivery:
         self.max_pending = max_pending
         self.status = None
         self.last_error = None
+        self.last_status_pid = None
+        self.last_status_at = None
+        self.next_report = 0.0
         self.acked = 0
         self.thread = None
         self.timings = {'batches': 0, 'exchange_seconds': 0.0, 'ack_db_seconds': 0.0,
@@ -216,6 +220,8 @@ class DurableUiDelivery:
                 self.timings['batches'] += 1
             if status:
                 pipe.send(status)
+                self.last_status_pid = (status.get('data') or {}).get('engineProcessId')
+                self.last_status_at = time.time()
         return bool(items)
 
     def _run(self):
@@ -223,13 +229,27 @@ class DurableUiDelivery:
             try:
                 more = self.drain_once()
                 self.last_error = None
+                self.report_service_delivery()
                 if more:
                     continue
             except (OSError, ValueError, sqlite3.Error) as error:
                 self.last_error = str(error)
+                self.report_service_delivery()
                 self.stop.wait(1)
             self.wake.wait(.5)
             self.wake.clear()
+
+    def report_service_delivery(self):
+        if os.environ.get("RANSOM0_SERVICE_STORAGE") != "1" or time.monotonic() < self.next_report:
+            return
+        self.next_report = time.monotonic()+10
+        from .resident import write_json
+        try:
+            write_json(self.path.parent/"ui-delivery-health.json", {"pid":os.getpid(),"at":time.time(),
+                "acknowledged":self.acked,"last_error":self.last_error,"last_status_pid":self.last_status_pid,
+                "last_status_at":self.last_status_at})
+        except OSError:
+            pass
 
     def diagnostics(self):
         with self.lock:

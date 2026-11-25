@@ -91,7 +91,10 @@ class WindowsUiPipe:
         if not self.k.WaitNamedPipeW(self.path, self.timeout_ms):
             raise OSError(C.get_last_error(), "UI pipe is unavailable or busy")
         from .service_pipe import CLIENT_FLAGS, verify_peer
-        handle = self.k.CreateFileW(self.path, 0xC0000000 if self.duplex else 0x40000000, 0, None, 3, CLIENT_FLAGS, None)
+        access = 0xC0000000 if self.duplex else 0x40000000
+        if os.environ.get("RANSOM0_SERVICE_STORAGE") == "1":
+            access = 3 if self.duplex else 2
+        handle = self.k.CreateFileW(self.path, access, 0, None, 3, CLIENT_FLAGS, None)
         if handle == C.c_void_p(-1).value:
             raise OSError(C.get_last_error(), "UI pipe connection failed")
         try:
