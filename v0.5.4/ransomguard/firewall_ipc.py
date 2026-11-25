@@ -215,8 +215,14 @@ class _WindowsPipeExchange:
                 if code not in (2, 121, 231):
                     raise OSError(code, "Firewall daemon pipe unavailable")
             else:
-                handle = self.k.CreateFileW(self.path, 0xC0000000, 0, None, 3, 0x40000000, None)
+                from .service_pipe import CLIENT_FLAGS, verify_peer
+                handle = self.k.CreateFileW(self.path, 0xC0000000, 0, None, 3, CLIENT_FLAGS, None)
                 if handle != C.c_void_p(-1).value:
+                    try:
+                        verify_peer(handle, "firewall/r0-fw-daemon.exe")
+                    except OSError:
+                        self.k.CloseHandle(handle)
+                        raise
                     break
                 code = C.get_last_error()
                 if code not in (2, 231):

@@ -8,12 +8,12 @@ from .protection_setup import save_json,validate_folder
 def scope_digest(base):return hashlib.sha256((Path(base)/'protection.json').read_bytes()).hexdigest()
 
 def preview(runtime,ident):
-    from .snapshots import default_state_db,require_admin
+    from .snapshots import default_state_db,require_storage_operator
     from .snapshot_management import owned_receipts
     from .recovery import enumerate_snapshots,_snapshot_id,volume_id_for_root
     from .recovery_catalog import catalog_snapshot
     from .snapshot_guard import snapshot_guard
-    require_admin();base=Path(runtime);ident=_snapshot_id(ident)
+    require_storage_operator();base=Path(runtime);ident=_snapshot_id(ident)
     with scope_lock(base),snapshot_guard():
         cfg=read(base,'protection.json',{})
         if not cfg:raise ValueError('먼저 복구 폴더를 설정해 주세요.')
@@ -37,9 +37,9 @@ def preview(runtime,ident):
 def execute(runtime,token,confirmed):
     if confirmed is not True:raise ValueError('파일 덮어쓰기와 관련 프로그램 종료를 확인해 주세요.')
     if str(uuid.UUID(token))!=token:raise ValueError('Invalid restore token')
-    from .snapshots import require_admin
+    from .snapshots import require_storage_operator
     from .recovery import Snapshot,build_plan,RecoveryEngine
-    require_admin();base=Path(runtime);path=base/'manual-restores'/(token+'.json')
+    require_storage_operator();base=Path(runtime);path=base/'manual-restores'/(token+'.json')
     with scope_lock(base),scope_lock(base,dispatch=True):
         assert_idle(base,allow_review=True)
         r=read(path.parent,path.name)

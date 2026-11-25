@@ -54,7 +54,10 @@ def fingerprint(filename):
         if stream.read(2) != b'MZ':
             raise ValueError('Windows 실행 파일이 아닙니다.')
         stream.seek(0)
-        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+        checksum = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            checksum.update(chunk)
+        digest = checksum.hexdigest()
         after = os.fstat(stream.fileno())
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
             raise ValueError('검사 중 실행 파일이 변경되었습니다.')
@@ -62,13 +65,19 @@ def fingerprint(filename):
 
 
 def _connect(runtime):
-    if os.name == 'nt' and not ctypes.windll.shell32.IsUserAnAdmin():
+    service_mode = os.environ.get("RANSOM0_SERVICE_STORAGE") == "1"
+    if service_mode:
+        from .service_identity import require_service_account
+        require_service_account()
+        if Path(runtime).resolve() != Path(sys.executable).resolve().parent.parent / "service-state/private/stores":
+            raise PermissionError("Unexpected program policy location")
+    elif os.name == 'nt' and not ctypes.windll.shell32.IsUserAnAdmin():
         raise PermissionError('프로그램 예외 변경에는 관리자 권한이 필요합니다.')
     path = policy_path(runtime)
     path.parent.mkdir(exist_ok=True)
     if path.parent.is_symlink() or getattr(path.parent.lstat(), 'st_file_attributes', 0) & 0x400:
         raise ValueError('잘못된 정책 저장 경로입니다.')
-    if os.name == 'nt':
+    if os.name == 'nt' and not service_mode:
         # Protect policy, journal and audit together. Users can read, never edit.
         subprocess.run(['icacls.exe', str(path.parent), '/inheritance:r', '/grant:r',
                         '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-32-545:(OI)(CI)R'],

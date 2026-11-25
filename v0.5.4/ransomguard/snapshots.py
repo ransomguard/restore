@@ -77,6 +77,8 @@ def default_state_db() -> Path:
     """Stable machine-wide location shared by the compatibility entry points."""
     if sys.platform != "win32":
         raise SnapshotPolicyError("Set an explicit state_db for portable/offline use")
+    if os.environ.get("RANSOM0_SERVICE_STORAGE") == "1" or os.environ.get("RANSOM0_STORAGE_OWNER") == "scm":
+        return Path(sys.executable).resolve().parent.parent / "service-state/private/stores/snapshots.sqlite3"
     return Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "RansomGuard" / "snapshots.sqlite3"
 
 
@@ -105,6 +107,16 @@ def _timeout(value: float) -> float:
     if not valid:
         raise SnapshotPolicyError("timeout_seconds must be a finite number from 1 to 300")
     return float(value)
+
+
+def require_storage_operator():
+    """Authorize the local operator or the actual service token for DB-side operations."""
+    from .vss_service import managed
+    if managed():
+        from .service_identity import require_service_account
+        require_service_account()
+    else:
+        require_admin()
 
 
 _CREATE_SCRIPT = r"""
@@ -148,6 +160,12 @@ def _create_vss_snapshot(volume_id: str, *, timeout_seconds: float = 180.0) -> S
     """Private provider: call only after a durable coordinator reservation."""
     volume = _volume_id(volume_id)
     timeout = _timeout(timeout_seconds)
+    from .vss_service import managed, request
+    if managed():
+        snapshot = Snapshot(**request("create", volume, timeout=timeout))
+        if snapshot.volume_id != volume:
+            raise SnapshotOutcomeUnknown("vss_service_volume_mismatch")
+        return snapshot
     require_admin()
     try:
         executable = _powershell_executable()

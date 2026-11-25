@@ -278,6 +278,12 @@ def enumerate_snapshots(volume_id: str, *, timeout_seconds: float = 30.0) -> lis
     volume = _volume_id(volume_id)
     if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not 0 < timeout_seconds <= 300:
         raise RecoveryValidationError("Snapshot discovery timeout must be between 0 and 300 seconds")
+    from .vss_service import managed, request
+    if managed():
+        inventory = [Snapshot(**item) for item in request("list", volume, timeout=timeout_seconds)]
+        if any(s.volume_id != volume for s in inventory) or len({s.snapshot_id for s in inventory}) != len(inventory):
+            raise SnapshotDiscoveryError("VSS service returned invalid inventory")
+        return inventory
     executable = _powershell_executable()
     try:
         result = subprocess.run(

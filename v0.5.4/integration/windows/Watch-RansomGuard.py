@@ -39,6 +39,15 @@ def check(launcher):
 
 
 def main():
+    state = PATHS['python'].parent.parent / 'service-state'
+    if ((state / 'incoming/service-owner.json').is_file() or (state / 'private/stores/import.json').is_file()):
+        from ransomguard.service_identity import scm_pid
+        from ransomguard.health_report import report
+        pid = scm_pid()
+        health = report(state / 'private/stores')
+        save(dict(state='observing' if pid and health['collector_pid'] == pid and health['collector_ready']
+                  else 'manual_attention', storage_owner='Ransom0Storage', health=health))
+        return
     session = C.c_ulong()
     if (not C.windll.kernel32.ProcessIdToSessionId(os.getpid(), C.byref(session)) or session.value == 0):
         raise RuntimeError('Supervisor requires the existing interactive user session')

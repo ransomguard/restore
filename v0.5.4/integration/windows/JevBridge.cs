@@ -29,6 +29,8 @@ namespace RansomGuard.Integration
             security.SetAccessRuleProtection(true, false);
             security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), FileSystemRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
             security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), FileSystemRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+            var storage = new SecurityIdentifier("S-1-5-80-3755250574-3201999084-3738073789-2921536738-940384076");
+            security.AddAccessRule(new FileSystemAccessRule(storage, FileSystemRights.ReadAndExecute, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
             new DirectoryInfo(folder).SetAccessControl(security);
             File.WriteAllBytes(KeyPath, ProtectedData.Protect(plain, Entropy, DataProtectionScope.LocalMachine));
         }
@@ -89,7 +91,7 @@ namespace RansomGuard.Integration
                     byte[] plain = Encoding.UTF8.GetBytes(ValidateKey(ReadLimited(Console.In, 4096)));
                     try { StoreKey(plain); }
                     finally { Array.Clear(plain, 0, plain.Length); }
-                    Emit(new { stored = true, protection = "DPAPI_LocalMachine_SystemAndAdministratorsACL", network_request = false });
+                    Emit(new { stored = true, protection = "DPAPI_LocalMachine_AdminSystemAndStorageReader", network_request = false });
                     return 0;
                 }
                 if (args.Length == 1 && args[0] == "--migrate-machine-key")
@@ -98,7 +100,7 @@ namespace RansomGuard.Integration
                     try { ValidateKey(Encoding.UTF8.GetString(plain)); StoreKey(plain); }
                     finally { Array.Clear(plain, 0, plain.Length); }
                     File.Delete(LegacyKeyPath);
-                    Emit(new { stored = true, protection = "DPAPI_LocalMachine_SystemAndAdministratorsACL", legacy_removed = true, network_request = false });
+                    Emit(new { stored = true, protection = "DPAPI_LocalMachine_AdminSystemAndStorageReader", legacy_removed = true, network_request = false });
                     return 0;
                 }
                 if (args.Length != 1 || args[0] != "--evaluate") throw new InvalidDataException("unsupported_operation");

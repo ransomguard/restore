@@ -90,9 +90,15 @@ class WindowsUiPipe:
             return
         if not self.k.WaitNamedPipeW(self.path, self.timeout_ms):
             raise OSError(C.get_last_error(), "UI pipe is unavailable or busy")
-        handle = self.k.CreateFileW(self.path, 0xC0000000 if self.duplex else 0x40000000, 0, None, 3, 0x40000000, None)
+        from .service_pipe import CLIENT_FLAGS, verify_peer
+        handle = self.k.CreateFileW(self.path, 0xC0000000 if self.duplex else 0x40000000, 0, None, 3, CLIENT_FLAGS, None)
         if handle == C.c_void_p(-1).value:
             raise OSError(C.get_last_error(), "UI pipe connection failed")
+        try:
+            verify_peer(handle, "ui/ransom0-ui.exe")
+        except OSError:
+            self.k.CloseHandle(handle)
+            raise
         self.handle = handle
 
     def send(self, message: dict[str, Any]) -> None:

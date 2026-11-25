@@ -11,7 +11,7 @@ BASE, PATHS = load_paths(__file__)
 ROOT, PY, UI, DAEMON = (PATHS[k] for k in ('recovery_root', 'python', 'ui', 'firewall'))
 
 def inventory():
-    command="Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('python.exe','ransom0-ui.exe','r0-fw-daemon.exe') } | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress"
+    command="[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('python.exe','ransom0-ui.exe','r0-fw-daemon.exe') } | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress"
     result=subprocess.run(['powershell.exe','-NoProfile','-Command',command],capture_output=True,timeout=20,creationflags=subprocess.CREATE_NO_WINDOW)
     if result.returncode:raise RuntimeError('Process inventory failed')
     text=result.stdout.decode('utf-8-sig').strip()
@@ -43,6 +43,11 @@ def main():
         result=subprocess.run(['sc.exe','start',service],capture_output=True,timeout=15,creationflags=subprocess.CREATE_NO_WINDOW)
         if result.returncode not in (0,1056):raise RuntimeError('Could not start '+service)
     sys.path.insert(0,str(ROOT))
+    service_state = PY.parent.parent / 'service-state'
+    if ((service_state / 'incoming/service-owner.json').is_file() or (service_state / 'private/stores/import.json').is_file()):
+        from ransomguard.service_launcher import start_session
+        print(json.dumps(start_session(service_state, BASE, UI, DAEMON, inventory, spawn)))
+        return
     from ransomguard.firewall_control import FirewallHoldManager,FirewallProfile,FirewallHoldError
     with FirewallHoldManager(BASE/'holds.sqlite3',FirewallProfile('https://api.typesafe.ai')):pass
     from ransomguard.live_profile import observer_options

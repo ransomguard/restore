@@ -56,10 +56,10 @@ def list_owned(runtime):
 
 def protect(runtime,snapshot_id,enabled):
     if type(enabled)!=bool:raise ValueError('Invalid protection value')
-    from .snapshots import default_state_db,require_admin
+    from .snapshots import default_state_db,require_storage_operator
     from .recovery import _snapshot_id,enumerate_snapshots
     from .snapshot_guard import snapshot_guard
-    require_admin();ident=_snapshot_id(snapshot_id);state=default_state_db()
+    require_storage_operator();ident=_snapshot_id(snapshot_id);state=default_state_db()
     with snapshot_guard():
         receipt=owned_receipts(state).get(ident)
         if not receipt:raise ValueError('Ransom0가 생성한 스냅샷만 보호할 수 있습니다.')
@@ -75,10 +75,10 @@ def protect(runtime,snapshot_id,enabled):
     return list_owned(runtime)
 
 def manual(runtime,request_id):
-    from .snapshots import default_state_db,require_admin,HourlySnapshotCoordinator
+    from .snapshots import default_state_db,require_storage_operator,HourlySnapshotCoordinator
     from .scope_settings import read,scope_lock
     from .protection_setup import validate_folder
-    require_admin()
+    require_storage_operator()
     with scope_lock(runtime):
         cfg=read(runtime,'protection.json',{})
         if not cfg:raise ValueError('먼저 보호·복구 폴더를 설정해 주세요.')

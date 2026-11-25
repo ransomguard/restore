@@ -155,12 +155,19 @@ def _powershell(script, payload):
 
 
 def read_storage(volume):
+    from .vss_service import managed, request
+    if managed():
+        return request("space", _volume_id(volume), timeout=30)
     return _powershell(_STORAGE_SCRIPT, {'volume_id': _volume_id(volume)})
 
 
 def delete_exact(snapshot):
     # No /all, oldest, snapshot-set, resize or volume-wide deletion API.
-    result = _powershell(_DELETE_SCRIPT, snapshot.to_dict())
+    from .vss_service import managed, request
+    if managed():
+        result = request("delete", snapshot.volume_id, snapshot=snapshot, timeout=30)
+    else:
+        result = _powershell(_DELETE_SCRIPT, snapshot.to_dict())
     if result.get('absent') is not True or _snapshot_id(result.get('snapshot_id')) != snapshot.snapshot_id:
         raise RuntimeError('Exact deletion was not verified')
 

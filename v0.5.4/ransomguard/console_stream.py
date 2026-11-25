@@ -31,6 +31,8 @@ def pipe_name(runtime, channel):
 class Sender:
     def __init__(self, address, connector=None):
         from multiprocessing.connection import Client
+        if os.environ.get("RANSOM0_SERVICE_STORAGE") == "1":
+            from .service_pipe import console_client as Client
         self.address = address
         self.connector = connector or Client
         self.queue = queue.Queue(512)
