@@ -60,8 +60,10 @@ class ScopeTests(unittest.TestCase):
             b=Path(tmp);s.save_json(b/'protection.json',{'protected_root':'old'})
             original=(b/'protection.json').read_bytes()
             with patch.object(s,'validate_folder',return_value=('C:\\Documents','C:\\')),patch('ransomguard.protection_setup.validate_folder',return_value=('C:\\Documents','C:\\')),patch.object(s,'refresh',return_value={'ready':False,'reason':'no_snapshot'}):
-                with self.assertRaisesRegex(RuntimeError,'no_snapshot'):
-                    s.change(b,{'folder':'C:\\Documents','acknowledgeFolderRevert':True,'snapshotBudgetGiB':8})
+                with patch('ransomguard.resident.request_reload') as rollback:
+                    with self.assertRaisesRegex(RuntimeError,'no_snapshot'):
+                        s.change(b,{'folder':'C:\\Documents','acknowledgeFolderRevert':True,'snapshotBudgetGiB':8})
+                rollback.assert_called_once_with(b/'observer-ready.json',Path(s.__file__).resolve().parent)
             self.assertEqual(original,(b/'protection.json').read_bytes())
             self.assertFalse((b/'live-response-profile.json').exists())
 
@@ -76,6 +78,7 @@ class ScopeTests(unittest.TestCase):
                 s.save_json(b/'protection-status.json',{'ready':True,'at':__import__('time').time(),'files':1})
                 return {'ready':True}
             def reload(*a,**k):
+                self.assertEqual(a[1], Path(s.__file__).resolve().parent)
                 s.save_json(b/'observer-ready.json',{'reload_request_id':'scope-test','worker_state':'running'})
                 return {'id':'scope-test'}
             with patch.object(s,'validate_folder',return_value=('C:\\Documents','C:\\')),patch('ransomguard.protection_setup.validate_folder',return_value=('C:\\Documents','C:\\')),patch.object(s,'refresh',side_effect=refresh),patch('ransomguard.observer_filter._query_dos_device',return_value='\\Device\\HarddiskVolume3'),patch('ransomguard.resident.request_reload',side_effect=reload),patch('subprocess.run',return_value=argparse.Namespace(returncode=0)),patch('ransomguard.live_profile.observer_options',return_value=([],'test')):

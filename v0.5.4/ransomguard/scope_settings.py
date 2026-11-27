@@ -149,7 +149,7 @@ def change(runtime, request):
             save_json(base/'scope-settings-enabled.json',{'schema_version':1})
             from .resident import request_reload
             ready=base/'observer-ready.json'
-            req=request_reload(ready,Path(installation['recovery_root'])/'ransomguard')
+            req=request_reload(ready,Path(__file__).resolve().parent)
             until=time.monotonic()+40
             while time.monotonic()<until:
                 h=read(base,ready.name,{})
@@ -164,7 +164,7 @@ def change(runtime, request):
             # Restore the previous observer arguments if handover already started.
             try:
                 from .resident import request_reload
-                request_reload(base/'observer-ready.json',Path(installation['recovery_root'])/'ransomguard')
+                request_reload(base/'observer-ready.json',Path(__file__).resolve().parent)
             except Exception:pass
             raise
     return status(base)
